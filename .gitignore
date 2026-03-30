@@ -1,3 +1,22 @@
 cc-origin
 cc-docs
 .claude/settings.local.json
+
+# Auto Claude data directory
+.auto-claude/
+
+# Build output
+dist/
+
+# Dependencies
+node_modules/
+
+# Env
+.env
+
+# Runtime data
+.data/
+
+# Test logs
+test/log/
+

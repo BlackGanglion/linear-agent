@@ -1,0 +1,313 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { PluginLogger } from "../webhook/logger-types";
+
+const LINEAR_AUTHORIZE_URL = "https://linear.app/oauth/authorize";
+const LINEAR_TOKEN_URL = "https://api.linear.app/oauth/token";
+const LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql";
+const LINEAR_SCOPES = "read,write,app:assignable,app:mentionable";
+
+export interface OAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+  webhookSecret: string; // used for state validation
+  tokenStorePath: string;
+}
+
+export interface TokenSet {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  scope?: string;
+  tokenType?: string;
+  agentId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TokenResponse {
+  access_token?: string;
+  refresh_token?: string;
+  expires_in?: number;
+  token_type?: string;
+  scope?: string;
+  error?: string;
+  error_description?: string;
+}
+
+// --- State validation ---
+
+function generateState(webhookSecret: string): string {
+  return createHash("sha256")
+    .update(`linear-oauth:${webhookSecret}`)
+    .digest("hex");
+}
+
+function validateState(state: string, webhookSecret: string): boolean {
+  const expected = generateState(webhookSecret);
+  if (state.length !== expected.length) return false;
+  return timingSafeEqual(
+    Buffer.from(state, "utf-8"),
+    Buffer.from(expected, "utf-8"),
+  );
+}
+
+// --- Token storage ---
+
+export function loadTokenSet(path: string): TokenSet | null {
+  try {
+    const raw = readFileSync(path, "utf-8");
+    return JSON.parse(raw) as TokenSet;
+  } catch {
+    return null;
+  }
+}
+
+function saveTokenSet(path: string, tokenSet: TokenSet): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(tokenSet, null, 2), { mode: 0o600 });
+}
+
+// --- Token exchange ---
+
+async function exchangeCode(
+  code: string,
+  config: OAuthConfig,
+): Promise<TokenResponse> {
+  const params = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    redirect_uri: config.redirectUri,
+  });
+
+  const res = await fetch(LINEAR_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+
+  return (await res.json()) as TokenResponse;
+}
+
+// --- Refresh token ---
+
+export async function refreshToken(
+  config: OAuthConfig,
+  logger: PluginLogger,
+): Promise<TokenSet | null> {
+  const existing = loadTokenSet(config.tokenStorePath);
+  if (!existing?.refreshToken) return null;
+
+  const params = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: existing.refreshToken,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+  });
+
+  const res = await fetch(LINEAR_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  }).catch(() => null);
+
+  if (!res || !res.ok) {
+    logger.warn(
+      `OAuth token refresh failed: ${res?.status ?? "network error"}`,
+    );
+    return null;
+  }
+
+  const payload = (await res.json().catch(() => null)) as TokenResponse | null;
+  if (!payload?.access_token) {
+    logger.warn("OAuth refresh: missing access_token in response");
+    return null;
+  }
+
+  const now = new Date();
+  const updated: TokenSet = {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token ?? existing.refreshToken,
+    tokenType: payload.token_type ?? existing.tokenType,
+    scope: payload.scope ?? existing.scope,
+    expiresAt:
+      typeof payload.expires_in === "number"
+        ? new Date(now.getTime() + payload.expires_in * 1000).toISOString()
+        : existing.expiresAt,
+    agentId: existing.agentId,
+    createdAt: existing.createdAt,
+    updatedAt: now.toISOString(),
+  };
+
+  saveTokenSet(config.tokenStorePath, updated);
+  logger.info("OAuth token refreshed successfully");
+  return updated;
+}
+
+// --- Resolve agent ID via viewer query ---
+
+async function resolveAgentId(accessToken: string): Promise<string> {
+  const res = await fetch(LINEAR_GRAPHQL_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query: "query { viewer { id } }" }),
+  });
+  const json = (await res.json()) as { data?: { viewer?: { id?: string } } };
+  return json.data?.viewer?.id ?? "";
+}
+
+// --- Get current access token (with auto-refresh) ---
+
+export async function getAccessToken(
+  config: OAuthConfig,
+  logger: PluginLogger,
+): Promise<{ accessToken: string; agentId: string } | null> {
+  const tokenSet = loadTokenSet(config.tokenStorePath);
+  if (!tokenSet) return null;
+
+  // Check if expired
+  if (tokenSet.expiresAt) {
+    const expiresAt = new Date(tokenSet.expiresAt).getTime();
+    const buffer = 5 * 60 * 1000; // refresh 5 min before expiry
+    if (Date.now() > expiresAt - buffer) {
+      logger.info("OAuth token near expiry, refreshing...");
+      const refreshed = await refreshToken(config, logger);
+      if (refreshed) {
+        return {
+          accessToken: refreshed.accessToken,
+          agentId: refreshed.agentId ?? "",
+        };
+      }
+      // If refresh fails but token hasn't actually expired, try using it
+      if (Date.now() < expiresAt) {
+        return {
+          accessToken: tokenSet.accessToken,
+          agentId: tokenSet.agentId ?? "",
+        };
+      }
+      return null;
+    }
+  }
+
+  return { accessToken: tokenSet.accessToken, agentId: tokenSet.agentId ?? "" };
+}
+
+// --- Authorization URL ---
+
+export function getAuthorizationUrl(config: OAuthConfig): string {
+  const state = generateState(config.webhookSecret);
+  const params = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    response_type: "code",
+    scope: LINEAR_SCOPES,
+    state,
+    actor: "app",
+  });
+  return `${LINEAR_AUTHORIZE_URL}?${params.toString()}`;
+}
+
+// --- OAuth callback HTTP handler ---
+
+export function createOAuthCallbackHandler(
+  config: OAuthConfig,
+  logger: PluginLogger,
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const url = new URL(
+      req.url ?? "/",
+      `http://${req.headers.host ?? "localhost"}`,
+    );
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const error = url.searchParams.get("error");
+
+    if (error) {
+      const desc = url.searchParams.get("error_description") ?? error;
+      logger.error(`OAuth error from Linear: ${desc}`);
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end(`<h1>OAuth Error</h1><p>${desc}</p>`);
+      return;
+    }
+
+    if (!code || !state) {
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end("<h1>Missing code or state parameter</h1>");
+      return;
+    }
+
+    // Validate state
+    if (!validateState(state, config.webhookSecret)) {
+      logger.error("OAuth state validation failed");
+      res.writeHead(403, { "Content-Type": "text/html" });
+      res.end("<h1>Invalid state parameter</h1>");
+      return;
+    }
+
+    // Exchange code for token
+    logger.info("Exchanging OAuth code for token...");
+    let payload: TokenResponse;
+    try {
+      payload = await exchangeCode(code, config);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`Token exchange failed: ${msg}`);
+      res.writeHead(500, { "Content-Type": "text/html" });
+      res.end(`<h1>Token Exchange Failed</h1><p>${msg}</p>`);
+      return;
+    }
+
+    if (payload.error || !payload.access_token) {
+      const desc =
+        payload.error_description ?? payload.error ?? "unknown error";
+      logger.error(`Token exchange error: ${desc}`);
+      res.writeHead(400, { "Content-Type": "text/html" });
+      res.end(`<h1>Token Exchange Error</h1><p>${desc}</p>`);
+      return;
+    }
+
+    // Resolve agent ID
+    let agentId = "";
+    try {
+      agentId = await resolveAgentId(payload.access_token);
+      logger.info(`Resolved agent ID: ${agentId}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`Failed to resolve agent ID: ${msg}`);
+    }
+
+    // Save token
+    const now = new Date();
+    const tokenSet: TokenSet = {
+      accessToken: payload.access_token,
+      refreshToken: payload.refresh_token,
+      tokenType: payload.token_type,
+      scope: payload.scope,
+      expiresAt:
+        typeof payload.expires_in === "number"
+          ? new Date(now.getTime() + payload.expires_in * 1000).toISOString()
+          : undefined,
+      agentId,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+    saveTokenSet(config.tokenStorePath, tokenSet);
+    logger.info("OAuth tokens saved successfully");
+
+    res.writeHead(200, { "Content-Type": "text/html" });
+    res.end(`
+      <h1>Authorization Successful</h1>
+      <p>Agent ID: <code>${agentId}</code></p>
+      <p>Token expires: ${tokenSet.expiresAt ?? "unknown"}</p>
+      <p>You can close this page.</p>
+    `);
+  };
+}

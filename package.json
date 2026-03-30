@@ -1,0 +1,19 @@
+{
+  "name": "openclaw-linear-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": "^2026.3.28",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "@linear/sdk": "^80.0.0"
+  }
+}

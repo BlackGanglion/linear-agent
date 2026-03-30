@@ -1,0 +1,29 @@
+{
+  "id": "openclaw-linear-agent",
+  "name": "Linear Agent",
+  "description": "Linear Agent Session integration — receive @mentions, run agents, stream results back to Linear",
+  "configSchema": {
+    "type": "object",
+    "required": ["webhookSecret", "linearApiKey", "agentId"],
+    "properties": {
+      "webhookSecret": {
+        "type": "string",
+        "description": "Linear webhook signing secret (HMAC-SHA256)",
+        "sensitive": true
+      },
+      "linearApiKey": {
+        "type": "string",
+        "description": "Linear API key for authentication",
+        "sensitive": true
+      },
+      "agentId": {
+        "type": "string",
+        "description": "Linear agent actor ID"
+      },
+      "defaultDir": {
+        "type": "string",
+        "description": "Default working directory for agent execution"
+      }
+    }
+  }
+}
