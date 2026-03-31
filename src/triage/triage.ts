@@ -215,6 +215,10 @@ export class IssueTriage {
         ],
       }, {
         apiKey: this.llmConfig.apiKey,
+        onPayload: (payload) => ({
+          ...(payload as Record<string, unknown>),
+          response_format: { type: "json_object" },
+        }),
       });
 
       if (
