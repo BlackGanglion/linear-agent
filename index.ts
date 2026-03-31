@@ -40,7 +40,7 @@ export default definePluginEntry({
     // GET /oauth/authorize — redirect to Linear OAuth
     api.registerHttpRoute({
       path: "/oauth/authorize",
-      auth: "gateway",
+      auth: "plugin",
       handler: async (_req, res) => {
         const url = getAuthorizationUrl(oauthConfig);
         res.writeHead(302, { Location: url });
@@ -53,7 +53,7 @@ export default definePluginEntry({
     const oauthCallbackHandler = createOAuthCallbackHandler(oauthConfig, logger);
     api.registerHttpRoute({
       path: "/oauth/callback",
-      auth: "gateway",
+      auth: "plugin",
       handler: async (req, res) => {
         await oauthCallbackHandler(req, res);
         return true;
