@@ -48,9 +48,9 @@ export interface LinearAgentRunParams {
   systemPrompt?: string;
   /** 工作目录 */
   workspaceDir?: string;
-  /** 模型提供商（如 "moonshot-cn"） */
+  /** 模型提供商（如 "moonshot-cn"），不设置则 fallback 到 anthropic */
   provider?: string;
-  /** 模型名称（如 "kimi-k2.5"） */
+  /** 模型名称（如 "kimi-k2.5"），不设置则 fallback 到 claude-opus-4-6 */
   model?: string;
   /** 超时毫秒数 */
   timeoutMs?: number;

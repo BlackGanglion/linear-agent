@@ -10,6 +10,30 @@ import {
   type OAuthConfig,
 } from "./src/api/oauth";
 
+/**
+ * 从 openclaw 用户配置中解析 model primary 值。
+ * agents.defaults.model 可以是 string（"provider/model"）或 { primary: "provider/model" }
+ */
+function resolveModelPrimary(model: unknown): string | undefined {
+  if (typeof model === "string") return model.trim() || undefined;
+  if (model && typeof model === "object" && "primary" in model) {
+    const primary = (model as { primary?: string }).primary;
+    return typeof primary === "string" ? primary.trim() || undefined : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * 拆分 "provider/model" 为 { provider, model }
+ */
+function splitModelRef(
+  ref: string,
+): { provider: string; model: string } | undefined {
+  const idx = ref.indexOf("/");
+  if (idx <= 0) return undefined;
+  return { provider: ref.slice(0, idx), model: ref.slice(idx + 1) };
+}
+
 export default definePluginEntry({
   id: "openclaw-linear-agent",
   name: "Linear Agent",
@@ -76,6 +100,39 @@ export default definePluginEntry({
       return result?.agentId ?? "";
     }
 
+    // --- 从 openclaw 配置解析 model（懒加载，缓存结果） ---
+    let modelResolved = false;
+    let resolvedProvider: string | undefined;
+    let resolvedModel: string | undefined;
+
+    async function resolveModel(): Promise<{
+      provider?: string;
+      model?: string;
+    }> {
+      if (modelResolved) return { provider: resolvedProvider, model: resolvedModel };
+      modelResolved = true;
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cfg = api.runtime.config.loadConfig() as any;
+        const modelPrimary = resolveModelPrimary(cfg?.agents?.defaults?.model);
+        if (modelPrimary) {
+          const ref = splitModelRef(modelPrimary);
+          if (ref) {
+            resolvedProvider = ref.provider;
+            resolvedModel = ref.model;
+            logger.info(
+              `Using model from openclaw config: ${ref.provider}/${ref.model}`,
+            );
+          }
+        }
+      } catch (err) {
+        logger.warn(
+          `Failed to load openclaw config for model resolution: ${err}`,
+        );
+      }
+      return { provider: resolvedProvider, model: resolvedModel };
+    }
+
     // --- Issue 自动分诊 ---
     const triage = new IssueTriage(getToken, logger);
 
@@ -132,6 +189,7 @@ export default definePluginEntry({
         if (!context) return;
 
         const prompt = triage.buildAgentPrompt(context);
+        const { provider, model } = await resolveModel();
 
         const agentResult = await runLinearAgent({
           sessionKey: `triage-${issueId}`,
@@ -139,8 +197,8 @@ export default definePluginEntry({
           systemPrompt:
             "You are a Linear issue triage assistant. Output ONLY the JSON result, no other text.",
           workspaceDir: config.defaultDir,
-          provider: config.provider,
-          model: config.model,
+          provider,
+          model,
           runEmbeddedPiAgent: api.runtime.agent.runEmbeddedPiAgent,
           logger,
         });
