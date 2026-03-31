@@ -54,8 +54,9 @@ export default definePluginEntry({
     api.registerHttpRoute({
       path: "/webhooks/linear",
       auth: "plugin",
-      handler: (req, res) => {
-        void webhookHandler(req, res);
+      handler: async (req, res) => {
+        await webhookHandler(req, res);
+        return true;
       },
     });
 
