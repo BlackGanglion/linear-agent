@@ -48,6 +48,10 @@ export interface LinearAgentRunParams {
   systemPrompt?: string;
   /** 工作目录 */
   workspaceDir?: string;
+  /** 模型提供商（如 "moonshot-cn"） */
+  provider?: string;
+  /** 模型名称（如 "kimi-k2.5"） */
+  model?: string;
   /** 超时毫秒数 */
   timeoutMs?: number;
   /** 宿主传入的 runEmbeddedPiAgent 函数 */
@@ -73,6 +77,8 @@ export async function runLinearAgent(
     prompt,
     systemPrompt,
     workspaceDir,
+    provider,
+    model,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     runEmbeddedPiAgent,
     logger,
@@ -97,6 +103,8 @@ export async function runLinearAgent(
       runId,
       prompt,
       extraSystemPrompt: systemPrompt,
+      provider,
+      model,
       timeoutMs,
       bootstrapContextMode: "lightweight", // triage 不需要加载完整 workspace 上下文
       shouldEmitToolResult: () => false,

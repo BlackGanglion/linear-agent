@@ -47,6 +47,10 @@ export interface PluginConfig {
   redirectUri: string;
   tokenStorePath: string;
   defaultDir?: string;
+  /** 模型提供商（如 "moonshot-cn"），不设置则使用 openclaw 默认 */
+  provider?: string;
+  /** 模型名称（如 "kimi-k2.5"），不设置则使用 openclaw 默认 */
+  model?: string;
 }
 
 /** Validated plugin config (all required fields present) */
@@ -75,5 +79,9 @@ export function validateConfig(
     tokenStorePath,
     defaultDir:
       typeof raw["defaultDir"] === "string" ? raw["defaultDir"] : undefined,
+    provider:
+      typeof raw["provider"] === "string" ? raw["provider"] : undefined,
+    model:
+      typeof raw["model"] === "string" ? raw["model"] : undefined,
   };
 }

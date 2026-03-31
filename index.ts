@@ -139,6 +139,8 @@ export default definePluginEntry({
           systemPrompt:
             "You are a Linear issue triage assistant. Output ONLY the JSON result, no other text.",
           workspaceDir: config.defaultDir,
+          provider: config.provider,
+          model: config.model,
           runEmbeddedPiAgent: api.runtime.agent.runEmbeddedPiAgent,
           logger,
         });
