@@ -254,19 +254,16 @@ export class IssueTriage {
     }
 
     try {
-      const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
+      const p = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
       return {
         assigneeId:
-          typeof parsed["assigneeId"] === "string"
-            ? parsed["assigneeId"]
-            : null,
+          typeof p["assigneeId"] === "string" ? p["assigneeId"] : null,
         priority:
-          typeof parsed["priority"] === "number" ? parsed["priority"] : 0,
-        labelIds: Array.isArray(parsed["labelIds"])
-          ? (parsed["labelIds"] as string[])
+          typeof p["priority"] === "number" ? p["priority"] : 0,
+        labelIds: Array.isArray(p["labelIds"])
+          ? (p["labelIds"] as string[])
           : [],
-        reason:
-          typeof parsed["reason"] === "string" ? parsed["reason"] : "",
+        reason: typeof p["reason"] === "string" ? p["reason"] : "",
       };
     } catch (err) {
       this.logger.warn(`Triage: JSON parse failed: ${err}`);
