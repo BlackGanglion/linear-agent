@@ -1,20 +1,19 @@
-# Agent Tools 规格定义
+# LLM 工具规格定义
 
-> **当前状态：** MVP 阶段未注册独立工具。Issue Triage 通过 prompt 指令 + JSON 输出完成，不需要 agent 调用工具。以下为 Phase 2 AgentSession 的工具设计。
+## 1. Issue 自动分诊（无工具模式）
 
-## 当前 MVP 实现
+Triage 不使用 tool calling，通过 prompt 指令 + JSON mode 完成：
 
-MVP 的 Issue Triage 不使用工具注册模式。agent 的交互方式：
-
-1. **输入：** IssueTriage.buildAgentPrompt() 构建的 prompt，包含 issue 信息和可选项
-2. **系统指令：** `extraSystemPrompt = "你是一个 Linear issue 分诊助手。只输出 JSON 结果，不要输出其他内容。"`
-3. **输出：** JSON 格式的 TriageResult，由 parseTriageResult() 通过正则提取
+1. **输入：** IssueTriage.buildPrompt() 构建的 prompt，包含 issue 信息和可选项
+2. **系统提示词：** `prompts/triage.md` — 分诊规则、输出格式、团队上下文
+3. **响应格式：** `response_format: { type: "json_object" }` — 强制 JSON 输出
+4. **输出：** JSON 格式的 TriageResult
 
 ```typescript
-// Agent 输出格式
+// LLM 输出格式
 {
   "assigneeId": "成员ID 或 null",
-  "priority": 0-4,
+  "priority": 0-4,           // 0=无, 1=紧急, 2=高, 3=中, 4=低
   "labelIds": ["标签ID", ...],
   "reason": "判断理由"
 }
@@ -22,149 +21,74 @@ MVP 的 Issue Triage 不使用工具注册模式。agent 的交互方式：
 
 ---
 
-## Phase 2: Agent Tools 设计
+## 2. @mention 代码分析（Tool Calling 模式）
 
-Agent 在 AgentSession 多轮对话中可调用的 Linear 操作工具。通过 `api.registerTool()` 注册。
+Mention Handler 使用 LLM tool calling 循环，最多 5 轮。
 
-### 1. linear_issue
+### 2.1 claude_code 工具
 
-Issue 的查看和操作。
+Agent 可调用本地 Claude CLI 分析代码仓库。
 
 ```typescript
 {
-  id: "linear_issue",
-  name: "Linear Issue",
-  description: "View, list, create, or update Linear issues",
+  name: "claude_code",
+  description: "Run Claude Code CLI to analyze the codebase and answer questions",
   parameters: {
     type: "object",
-    required: ["action"],
+    required: ["prompt"],
     properties: {
-      action: {
+      prompt: {
         type: "string",
-        enum: ["view", "list", "create", "update"],
-      },
-      // view
-      issueId: {
-        type: "string",
-        description: "Issue ID or identifier (e.g. 'ENG-123')",
-      },
-      // list
-      filter: {
-        type: "object",
-        description: "Filter criteria",
-        properties: {
-          teamId: { type: "string" },
-          stateType: { type: "string", enum: ["triage","backlog","unstarted","started","completed","canceled"] },
-          assigneeId: { type: "string" },
-          priority: { type: "number", description: "1=urgent, 4=low" },
-        },
-      },
-      limit: { type: "number", default: 20 },
-      // create
-      title: { type: "string" },
-      description: { type: "string" },
-      teamId: { type: "string" },
-      priority: { type: "number" },
-      labelIds: { type: "array", items: { type: "string" } },
-      // update
-      stateId: { type: "string" },
-      assigneeId: { type: "string" },
-    },
-  },
-}
-```
-
-**返回格式：** 结构化 JSON，agent 可直接读取。
-
-```typescript
-// view 返回
-{
-  id: "uuid",
-  identifier: "ENG-123",
-  title: "Fix login bug",
-  description: "...",
-  state: { name: "In Progress", type: "started" },
-  priority: 2,
-  assignee: { name: "John" },
-  team: { key: "ENG", name: "Engineering" },
-  labels: ["bug", "frontend"],
-  url: "https://linear.app/team/issue/ENG-123"
-}
-
-// list 返回
-{ issues: [...], total: 15 }
-
-// create/update 返回
-{ success: true, issue: { id, identifier, url } }
-```
-
----
-
-### 2. linear_comment
-
-Issue comment 操作。
-
-```typescript
-{
-  id: "linear_comment",
-  name: "Linear Comment",
-  description: "List or add comments on a Linear issue",
-  parameters: {
-    type: "object",
-    required: ["action", "issueId"],
-    properties: {
-      action: {
-        type: "string",
-        enum: ["list", "add"],
-      },
-      issueId: { type: "string" },
-      // add
-      body: {
-        type: "string",
-        description: "Comment body (Markdown)",
+        description: "The analysis prompt to send to Claude Code",
       },
     },
   },
 }
 ```
 
----
-
-### 3. linear_session
-
-Agent Session 管理。Agent 可以主动管理自己的 session。
+**执行方式：**
 
 ```typescript
-{
-  id: "linear_session",
-  name: "Linear Agent Session",
-  description: "Manage the current agent session: view history or mark complete",
-  parameters: {
-    type: "object",
-    required: ["action"],
-    properties: {
-      action: {
-        type: "string",
-        enum: ["history", "complete"],
-        description: "history: 查看当前 session 的对话历史; complete: 标记 session 完成",
-      },
-    },
-  },
-}
+import { execFile } from "node:child_process";
+
+execFile("claude", [
+  "-p", toolArgs.prompt,
+  "--output-format", "text",
+  "--max-turns", "10",
+], {
+  cwd: config.projectDir,   // CLAUDE_CODE_DIR 环境变量
+  timeout: 120_000,          // 2 分钟超时
+  maxBuffer: 1024 * 1024,   // 1MB 输出上限
+});
 ```
 
-**注意：** `complete` 操作会结束当前 session。Agent 应在确认任务完成后才调用。
+**约束：**
+- 工作目录由 `CLAUDE_CODE_DIR` 环境变量指定
+- 每次调用最多运行 2 分钟
+- 输出超过 1MB 会被截断
+- LLM 最多调用 5 轮工具后强制返回最终回复
 
----
+### 2.2 Tool Calling 循环
 
-## 工具优先级
+```
+LLM 收到系统提示词 + issue 上下文 + 评论线程
+            │
+            ▼
+        ┌──────────┐
+        │ LLM 回复  │
+        └────┬─────┘
+             │
+      ┌──────▼──────┐
+      │ 有 tool call? │
+      │              │
+      ├─ 是 ─→ 执行 claude_code ─→ 结果作为 tool_result 追加 ─→ 回到 LLM
+      │
+      └─ 否 ─→ 提取文本作为最终回复 ─→ 发 Linear 评论
+```
 
-| Phase | 工具 | 操作 | 状态 |
-|-------|------|------|------|
-| **MVP** | _(无工具)_ | prompt → JSON 输出 | ✅ 已实现 |
-| Phase 2 | linear_issue | view, update | 设计中 |
-| Phase 2 | linear_session | complete | 设计中 |
-| Phase 2 | linear_issue | list, create | 设计中 |
-| Phase 2 | linear_comment | list, add | 设计中 |
-| Phase 3 | linear_team | list, members | 规划中 |
-| Phase 3 | linear_project | list, view | 规划中 |
+### 2.3 系统提示词
+
+使用 `prompts/mention.md`，指导 LLM：
+- 理解 issue 上下文和评论线程
+- 根据需要调用 `claude_code` 工具分析代码
+- 给出有建设性的技术回复

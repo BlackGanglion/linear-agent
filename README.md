@@ -40,7 +40,8 @@ All configuration is via environment variables (`.env` file supported):
 
 ## Linear Setup
 
-1. Create a Linear OAuth app at Linear Settings → API → OAuth applications
+1. Ensure your Linear account has **Admin** privileges (required to create OAuth applications)
+2. Create a Linear OAuth app at Linear Settings → API → OAuth applications
 2. Set the callback URL to `https://<your-host>/oauth/callback`
 3. Create a webhook at Linear Settings → API → Webhooks
 4. Set the webhook URL to `https://<your-host>/webhooks/linear`
@@ -76,7 +77,7 @@ prompts/
 ## Tech Stack
 
 - **[Hono](https://hono.dev/)** — HTTP server
-- **[@linear/sdk](https://developers.linear.app/docs/sdk)** — Linear API & webhook verification
+- **[@linear/sdk](https://developers.linear.app/docs/sdk/getting-started)** — Linear TypeScript SDK
 - **[@mariozechner/pi-ai](https://github.com/badlogic/pi-mono)** — LLM completion (OpenAI-compatible)
 - **TypeScript** + **tsx** — No build step required
 

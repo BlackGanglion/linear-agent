@@ -2,22 +2,35 @@
 
 ## 1. 认证
 
-MVP 使用静态 API Key，通过 `@linear/sdk` 的 `LinearClient`：
+使用 OAuth 2.0 获取 access token，通过 `@linear/sdk` 的 `LinearClient` 访问 API：
 
 ```typescript
 import { LinearClient } from "@linear/sdk";
-const client = new LinearClient({ accessToken: config.linearApiKey });
+
+class LinearApiClient {
+  private tokenProvider: () => Promise<string>;
+  private cachedClient: LinearClient | null = null;
+  private cachedToken: string | null = null;
+
+  async getClient(): Promise<LinearClient> {
+    const token = await this.tokenProvider();
+    if (token !== this.cachedToken) {
+      this.cachedClient = new LinearClient({ accessToken: token });
+      this.cachedToken = token;
+    }
+    return this.cachedClient!;
+  }
+}
 ```
 
-OAuth 2.0 流程已实现 (`src/api/oauth.ts`)，但未启用（Phase 3）。
+Token 自动刷新由 OAuth 模块处理，`tokenProvider` 每次返回最新有效 token。
 
-## 2. SDK 调用（当前 MVP — Issue Triage）
-
-MVP 通过 `@linear/sdk` 的 LinearClient 方法访问 Linear，不直接使用 GraphQL。
+## 2. SDK 调用
 
 ### 2.1 获取 Issue 详情
 
 ```typescript
+const client = await linearClient.getClient();
 const issue = await client.issue(issueId);
 // issue.identifier, issue.title, issue.description, issue.priority
 ```
@@ -51,7 +64,18 @@ const states = await team.states();
 // states.nodes[].id, states.nodes[].name, states.nodes[].type
 ```
 
-### 2.3 更新 Issue
+### 2.3 获取 Issue 评论（mention 场景）
+
+```typescript
+const comments = await issue.comments();
+for (const comment of comments.nodes) {
+  // comment.body, comment.createdAt
+  const user = await comment.user;
+  // user.name, user.id
+}
+```
+
+### 2.4 更新 Issue
 
 ```typescript
 await issue.update({
@@ -61,13 +85,20 @@ await issue.update({
 });
 ```
 
-### 2.4 创建 Comment
+### 2.5 创建 Comment
 
 ```typescript
 await client.createComment({
   issueId: "issue-uuid",
   body: "**Issue 自动分诊结果：**\n\n- **负责人** → John\n- **优先级** → 高\n\n> 判断理由...",
 });
+```
+
+### 2.6 获取当前用户（Agent ID）
+
+```typescript
+const me = await client.viewer;
+// me.id — 用于 mention 检测和成员列表排除
 ```
 
 ## 3. Webhook 签名验证
@@ -80,129 +111,73 @@ import { LinearWebhookClient } from "@linear/sdk/webhooks";
 const webhookClient = new LinearWebhookClient(webhookSecret);
 const handler = webhookClient.createHandler();
 
-// 注册事件处理
+// Issue 事件
 handler.on("Issue", (payload) => {
-  // payload 已验签且类型安全
   if (payload.action === "create") {
     // payload.data.id, payload.data.identifier, payload.data.title
   }
 });
 
-// Phase 2: AgentSession 事件
-handler.on("AgentSessionEvent", (payload) => {
-  // payload.action: "created" | "prompted" | "stopped"
-  // payload.agentSession.id
-  // payload.previousComments, payload.promptContext
+// Comment 事件
+handler.on("Comment", (payload) => {
+  if (payload.action === "create") {
+    // payload.data.body, payload.data.issueId, payload.data.userId
+  }
 });
 ```
 
-## 4. Phase 2: AgentSession GraphQL API
+## 4. OAuth 2.0 流程
 
-以下 API 在 AgentSession 多轮对话功能启用后使用。`LinearApiClient` (`src/api/linear.ts`) 已实现封装。
+### 4.1 授权
 
-### 4.1 创建 Agent Activity
-
-核心 API — agent 通过此接口向 Linear 发送思考/行动/回复。
-
-```graphql
-mutation CreateAgentActivity($input: AgentActivityCreateInput!) {
-  agentActivityCreate(input: $input) {
-    success
-    agentActivity {
-      id
-    }
-  }
-}
+```
+GET /oauth/authorize
+→ 重定向到 https://linear.app/oauth/authorize?
+    client_id=<CLIENT_ID>
+    &redirect_uri=<REDIRECT_URI>
+    &response_type=code
+    &scope=read,write
+    &state=<HMAC_STATE>
 ```
 
-**Input 结构：**
+State 参数使用 `webhookSecret + timestamp` 的 SHA256 哈希，防止 CSRF。
+
+### 4.2 Token 交换
+
+```
+GET /oauth/callback?code=<CODE>&state=<STATE>
+→ POST https://api.linear.app/oauth/token
+    grant_type=authorization_code
+    &code=<CODE>
+    &client_id=<CLIENT_ID>
+    &client_secret=<CLIENT_SECRET>
+    &redirect_uri=<REDIRECT_URI>
+```
+
+### 4.3 Token 刷新
 
 ```typescript
+// 自动刷新：过期前 5 分钟触发
+async function refreshToken(refreshToken: string): Promise<TokenSet> {
+  // POST https://api.linear.app/oauth/token
+  //   grant_type=refresh_token
+  //   &refresh_token=<REFRESH_TOKEN>
+  //   &client_id=<CLIENT_ID>
+  //   &client_secret=<CLIENT_SECRET>
+}
+```
+
+### 4.4 Token 存储
+
+Token 持久化到 `.data/oauth-token.json`：
+
+```json
 {
-  sessionId: string;
-  type: "thought" | "action" | "elicitation" | "response" | "error";
-  content: string;
-}
-```
-
-### 4.2 完成 Agent Session
-
-```graphql
-mutation CompleteAgentSession($id: String!) {
-  agentSessionComplete(id: $id) {
-    success
-  }
-}
-```
-
-### 4.3 获取 Agent Session Activities
-
-```graphql
-query GetSessionActivities($sessionId: String!) {
-  agentSession(id: $sessionId) {
-    id
-    status
-    activities {
-      nodes {
-        id
-        type
-        content
-        createdAt
-      }
-    }
-  }
-}
-```
-
-## 5. Phase 3: 其他 GraphQL 查询
-
-以下查询在工具注册后使用（Agent Tools 的 list/create 操作）。
-
-### 5.1 列出 Issue（按过滤条件）
-
-```graphql
-query ListIssues($filter: IssueFilter, $first: Int) {
-  issues(filter: $filter, first: $first) {
-    nodes {
-      id
-      identifier
-      title
-      priority
-      state { name type }
-      assignee { name }
-    }
-  }
-}
-```
-
-### 5.2 创建 Issue
-
-```graphql
-mutation CreateIssue($input: IssueCreateInput!) {
-  issueCreate(input: $input) {
-    success
-    issue {
-      id
-      identifier
-      url
-    }
-  }
-}
-```
-
-### 5.3 获取 Issue Comments
-
-```graphql
-query GetIssueComments($issueId: String!) {
-  issue(id: $issueId) {
-    comments {
-      nodes {
-        id
-        body
-        createdAt
-        user { id name }
-      }
-    }
-  }
+  "accessToken": "lin_oauth_xxx",
+  "refreshToken": "lin_refresh_xxx",
+  "expiresAt": 1234567890000,
+  "agentId": "user-uuid-of-bot",
+  "createdAt": 1234567890000,
+  "updatedAt": 1234567890000
 }
 ```

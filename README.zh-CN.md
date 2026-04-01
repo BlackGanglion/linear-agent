@@ -40,7 +40,8 @@ npm run dev
 
 ## Linear 侧设置
 
-1. 在 Linear Settings → API → OAuth applications 中创建 OAuth 应用
+1. 确保你的 Linear 账号拥有 **Admin** 权限（创建 OAuth 应用需要管理员权限）
+2. 在 Linear Settings → API → OAuth applications 中创建 OAuth 应用
 2. 回调地址填写 `https://<your-host>/oauth/callback`
 3. 在 Linear Settings → API → Webhooks 中创建 Webhook
 4. URL 填写 `https://<your-host>/webhooks/linear`
@@ -76,7 +77,7 @@ prompts/
 ## 技术栈
 
 - **[Hono](https://hono.dev/)** — HTTP 服务
-- **[@linear/sdk](https://developers.linear.app/docs/sdk)** — Linear API 与 Webhook 验证
+- **[@linear/sdk](https://developers.linear.app/docs/sdk/getting-started)** — Linear TypeScript SDK
 - **[@mariozechner/pi-ai](https://github.com/badlogic/pi-mono)** — LLM 调用（OpenAI 兼容）
 - **TypeScript** + **tsx** — 无需构建
 
