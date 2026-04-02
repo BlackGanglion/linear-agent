@@ -46,6 +46,7 @@ const linearClient = new LinearApiClient(getToken);
 const triage = new IssueTriage(
   linearClient,
   {
+    provider: config.llmProvider,
     baseUrl: config.llmBaseUrl,
     model: config.llmModel,
     apiKey: config.llmApiKey,
@@ -149,5 +150,5 @@ serve({ fetch: app.fetch, port: config.port }, () => {
   logger.info(
     `linear-agent server listening on http://localhost:${config.port}`,
   );
-  logger.info(`LLM: ${config.llmBaseUrl} / ${config.llmModel}`);
+  logger.info(`LLM: provider=${config.llmProvider} model=${config.llmModel} base=${config.llmBaseUrl}`);
 });

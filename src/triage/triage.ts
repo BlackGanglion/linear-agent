@@ -36,6 +36,7 @@ export interface TriageResult {
 }
 
 export interface LLMConfig {
+  provider: "kimi" | "gpt";
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -237,9 +238,11 @@ export class IssueTriage {
   async runTriage(context: IssueContext): Promise<TriageResult | null> {
     const userPrompt = this.buildPrompt(context);
 
-    // Extract and download images from description
+    const content: Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> =
+      [{ type: "text", text: userPrompt }];
+
+    // Download images and send as base64
     const imageUrls = extractImageUrls(context.description);
-    const images: Array<{ type: "image"; mimeType: string; data: string }> = [];
     if (imageUrls.length > 0) {
       this.logger.info(
         `Triage ${context.identifier}: downloading ${imageUrls.length} image(s)`,
@@ -249,7 +252,7 @@ export class IssueTriage {
       );
       for (const result of results) {
         if (result) {
-          images.push({ type: "image", mimeType: result.mimeType, data: result.data });
+          content.push({ type: "image", mimeType: result.mimeType, data: result.data });
         }
       }
     }
@@ -257,10 +260,6 @@ export class IssueTriage {
     this.logger.info(
       `Triage ${context.identifier}: calling ${this.llmConfig.model}`,
     );
-
-    // Build message content: text + images
-    const content: Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> =
-      [{ type: "text", text: userPrompt }, ...images];
 
     try {
       const response = await complete(this.model, {
