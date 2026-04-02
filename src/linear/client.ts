@@ -71,6 +71,16 @@ export class LinearApiClient {
     return client.updateIssue(issueId, input);
   }
 
+  /** Fetch issue by identifier (e.g. "YOU-16547"), returns issue id or null */
+  async getIssueIdByIdentifier(identifier: string): Promise<string | null> {
+    const client = await this.ensure();
+    const result = await client.issues({
+      filter: { number: { eq: parseInt(identifier.split("-")[1]!, 10) }, team: { key: { eq: identifier.split("-")[0]! } } },
+      first: 1,
+    });
+    return result.nodes[0]?.id ?? null;
+  }
+
   /** Create a comment on an issue */
   async createComment(issueId: string, body: string) {
     const client = await this.ensure();

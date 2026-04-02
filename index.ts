@@ -53,6 +53,36 @@ const triage = new IssueTriage(
   logger,
 );
 
+// --- Webhook gap detection ---
+
+/** Track last seen issue number per team prefix to detect missed webhooks */
+const lastSeenNumber = new Map<string, number>();
+
+function parseIdentifier(identifier: string): { prefix: string; number: number } | null {
+  const match = identifier.match(/^([A-Z]+)-(\d+)$/);
+  if (!match) return null;
+  return { prefix: match[1]!, number: parseInt(match[2]!, 10) };
+}
+
+async function handleMissedIssues(prefix: string, from: number, to: number) {
+  for (let n = from; n < to; n++) {
+    const identifier = `${prefix}-${n}`;
+    logger.warn(`[webhook-gap] Missed webhook for ${identifier}, fetching via API`);
+    try {
+      const issueId = await linearClient.getIssueIdByIdentifier(identifier);
+      if (issueId) {
+        logger.warn(`[webhook-gap] Recovering ${identifier} (id=${issueId})`);
+        void triage.triageIssue(issueId);
+      } else {
+        logger.warn(`[webhook-gap] ${identifier} not found (may be deleted or private)`);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[webhook-gap] Failed to recover ${identifier}: ${msg}`);
+    }
+  }
+}
+
 // --- Webhook handler ---
 
 const webhookHandler = createWebhookHandler(
@@ -64,9 +94,23 @@ const webhookHandler = createWebhookHandler(
         logger.warn("Issue created without id");
         return;
       }
-      logger.info(
-        `New issue: ${String(payload.data.identifier)} — ${String(payload.data.title)}`,
-      );
+
+      const identifier = String(payload.data.identifier);
+      logger.info(`New issue: ${identifier} — ${String(payload.data.title)}`);
+
+      // Gap detection
+      const parsed = parseIdentifier(identifier);
+      if (parsed) {
+        const lastNum = lastSeenNumber.get(parsed.prefix);
+        if (lastNum !== undefined && parsed.number > lastNum + 1) {
+          logger.warn(
+            `[webhook-gap] Detected gap: last=${parsed.prefix}-${lastNum}, current=${identifier}, missing ${parsed.number - lastNum - 1} issue(s)`,
+          );
+          void handleMissedIssues(parsed.prefix, lastNum + 1, parsed.number);
+        }
+        lastSeenNumber.set(parsed.prefix, parsed.number);
+      }
+
       void triage.triageIssue(issueId);
     },
   },
