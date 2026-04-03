@@ -2,10 +2,12 @@
 
 ## 2026-04-03
 
+- **引入 pi-agent-core** — 用 `@mariozechner/pi-agent-core` 的 `Agent` 类替代手写 tool-calling 循环，自动处理消息状态、工具执行、错误处理
+- **submit_triage_result 直接写入 Linear** — `submitTriageTool` 改为工厂函数 `createSubmitTriageTool`，在工具 `execute` 中直接调用 `updateIssue` 和 `createComment`，不再需要外部 `applyResult` 流程
+- **清理冗余类型和日志** — 删除 `TriageTool` 类型别名和 `types.ts`，工具直接使用 `AgentTool`；移除 5 条非必要日志（already triaged、calling tool、not eligible、updated、done），仅保留主链路结果和异常日志
+- **集成测试** — 新增 `test/triage.test.ts`，mock Linear API + 真实 LLM 调用，覆盖 Contact Us、Sentry Error、非分类 issue、部分字段已设置四种场景
 - **Langfuse Trace 查询工具** — 新增 `fetch_trace` tool，当 issue 描述中包含 `lab.gooo.ai` trace 链接时，LLM 可调用该工具获取 observations 数据，提取 tool 调用次数及异常信息，辅助更精准地判断问题类型和分配负责人
 - **结构化结果提交** — 新增 `submit_triage_result` tool，LLM 通过 tool call 提交结构化的 triage 结果，替代 `response_format: json_object`，解决 tool calling 与 JSON 模式冲突问题
-- **LLM Tool Calling 支持** — 将 triage 的单次 LLM 调用改为 tool-calling 循环（最多 5 轮），基于 pi-ai 原生 tool 支持，LLM 可在 triage 过程中按需调用外部工具获取额外上下文
-- **工具注册机制** — 新建 `src/tool/` 目录，包含统一的 `TriageTool` 接口（`types.ts`）、工具注册表（`registry.ts`），支持后续扩展更多工具
 - **中文化工具描述** — 所有工具的 description 和参数说明统一使用中文，与 triage prompt 语言一致
 
 ## 2026-04-02

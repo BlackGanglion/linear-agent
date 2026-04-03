@@ -1,5 +1,5 @@
 import { Type } from "@mariozechner/pi-ai";
-import type { TriageTool } from "./types";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 const LANGFUSE_BASE_URL = "https://lab.gooo.ai/api/public";
 
@@ -69,92 +69,66 @@ function summarizeObservations(
   return { toolCounts, errors };
 }
 
-export const fetchTraceTool: TriageTool = {
-  definition: {
-    name: "fetch_trace",
-    description:
-      "从 lab.gooo.ai 获取 trace 详情。当 issue 描述中包含 https://lab.gooo.ai/project/{projectId}/traces/{traceId} 格式的链接时使用此工具，返回 trace 涉及的工具调用及异常信息，辅助判断问题类型和负责人。",
-    parameters: Type.Object({
-      url: Type.String({
-        description:
-          "完整的 lab.gooo.ai trace 链接，如 https://lab.gooo.ai/project/abc123/traces/def456",
-      }),
+export const fetchTraceTool: AgentTool = {
+  name: "fetch_trace",
+  label: "Fetch Trace",
+  description:
+    "从 lab.gooo.ai 获取 trace 详情。当 issue 描述中包含 https://lab.gooo.ai/project/{projectId}/traces/{traceId} 格式的链接时使用此工具，返回 trace 涉及的工具调用及异常信息，辅助判断问题类型和负责人。",
+  parameters: Type.Object({
+    url: Type.String({
+      description:
+        "完整的 lab.gooo.ai trace 链接，如 https://lab.gooo.ai/project/abc123/traces/def456",
     }),
-  },
+  }),
 
-  execute: async (args: Record<string, any>) => {
-    const url = args["url"] as string;
+  execute: async (_toolCallId: string, params: unknown) => {
+    const { url } = params as { url: string };
     const traceId = parseTraceId(url);
 
     if (!traceId) {
-      return {
-        content: [
-          { type: "text" as const, text: `Error: could not parse traceId from URL: ${url}` },
-        ],
-        isError: true,
-      };
+      throw new Error(`Could not parse traceId from URL: ${url}`);
     }
 
     const publicKey = process.env["LANGFUSE_PUBLIC_KEY"] ?? "";
     const secretKey = process.env["LANGFUSE_SECRET_KEY"] ?? "";
 
     if (!publicKey || !secretKey) {
-      return {
-        content: [
-          { type: "text" as const, text: "Error: LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not configured" },
-        ],
-        isError: true,
-      };
+      throw new Error("LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY not configured");
     }
 
     const credentials = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
     const headers = { Authorization: `Basic ${credentials}` };
 
-    try {
-      const obsRes = await fetch(
-        `${LANGFUSE_BASE_URL}/observations?traceId=${traceId}`,
-        { headers },
-      );
+    const obsRes = await fetch(
+      `${LANGFUSE_BASE_URL}/observations?traceId=${traceId}`,
+      { headers },
+    );
 
-      if (!obsRes.ok) {
-        return {
-          content: [
-            { type: "text" as const, text: `Error: Langfuse observations API returned ${obsRes.status} ${obsRes.statusText}` },
-          ],
-          isError: true,
-        };
-      }
-
-      const obsBody = (await obsRes.json()) as { data: Observation[] };
-
-      const { toolCounts, errors } = summarizeObservations(obsBody.data);
-
-      const toolSummary = [...toolCounts.entries()]
-        .map(([name, count]) => `${name}(${count}次)`)
-        .join(", ");
-
-      let text: string;
-      if (errors.length > 0) {
-        const parts = errors.map((e) => `${e.tool} tool 出现异常: ${e.error}`);
-        text = parts.join("\n");
-      } else if (toolSummary) {
-        text = `调用了 ${toolSummary} tool，未发现异常`;
-      } else {
-        text = "该 trace 中未发现 tool 调用记录";
-      }
-
-      return {
-        content: [{ type: "text" as const, text }],
-        isError: false,
-      };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return {
-        content: [
-          { type: "text" as const, text: `Error fetching trace: ${msg}` },
-        ],
-        isError: true,
-      };
+    if (!obsRes.ok) {
+      throw new Error(`Langfuse observations API returned ${obsRes.status} ${obsRes.statusText}`);
     }
+
+    const obsBody = (await obsRes.json()) as { data: Observation[] };
+
+    const { toolCounts, errors } = summarizeObservations(obsBody.data);
+
+    const toolSummary = [...toolCounts.entries()]
+      .map(([name, count]) => `${name}(${count}次)`)
+      .join(", ");
+
+    let text: string;
+    if (errors.length > 0) {
+      const parts = errors.map((e) => `${e.tool} tool 出现异常: ${e.error}`);
+      text = parts.join("\n");
+    } else if (toolSummary) {
+      text = `调用了 ${toolSummary} tool，未发现异常`;
+    } else {
+      text = "该 trace 中未发现 tool 调用记录";
+    }
+
+    return {
+      content: [{ type: "text" as const, text }],
+      details: {},
+    };
   },
 };

@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { complete } from "@mariozechner/pi-ai";
-import type { Model, Message, ToolCall as PiAiToolCall } from "@mariozechner/pi-ai";
+import type { Model } from "@mariozechner/pi-ai";
+import { Agent } from "@mariozechner/pi-agent-core";
 import type { LinearApiClient } from "../linear/client";
 import type { PluginLogger } from "../webhook/logger-types";
-import { getToolDefinitions, getToolExecutor } from "../tool/registry";
-import { SUBMIT_TRIAGE_TOOL_NAME } from "../tool/submit-triage";
+import { fetchTraceTool, createSubmitTriageTool } from "../tool/registry";
 
 // --- Types ---
 
@@ -128,9 +127,6 @@ export class IssueTriage {
 
     // Already fully triaged
     if (hasAssignee && hasPriority && hasLabels) {
-      this.logger.info(
-        `Issue ${issue.identifier}: already triaged, skipping`,
-      );
       return null;
     }
 
@@ -235,9 +231,8 @@ export class IssueTriage {
     return lines.join("\n");
   }
 
-  /** Call LLM to triage the issue (with tool-calling loop) */
-  async runTriage(context: IssueContext): Promise<TriageResult | null> {
-    const MAX_TOOL_ROUNDS = 5;
+  /** Run triage using pi-agent-core Agent */
+  async runTriage(context: IssueContext): Promise<void> {
     const userPrompt = this.buildPrompt(context);
 
     // Extract and download images from description
@@ -254,188 +249,35 @@ export class IssueTriage {
       }
     }
 
-    // Build message content: text + images
-    const content: Array<{ type: "text"; text: string } | { type: "image"; mimeType: string; data: string }> =
-      [{ type: "text", text: userPrompt }, ...images];
+    const submitTool = createSubmitTriageTool(
+      this.linearClient,
+      context,
+      this.logger,
+    );
 
-    const tools = getToolDefinitions();
-    const messages: Message[] = [
-      { role: "user", content, timestamp: Date.now() },
-    ];
+    const agent = new Agent({
+      initialState: {
+        systemPrompt: this.triagePrompt,
+        model: this.model,
+        tools: [fetchTraceTool, submitTool],
+      },
+      getApiKey: async () => this.llmConfig.apiKey,
+      toolExecution: "sequential",
+    });
 
-    try {
-      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const response = await complete(this.model, {
-          systemPrompt: this.triagePrompt,
-          messages,
-          tools,
-        }, {
-          apiKey: this.llmConfig.apiKey,
-        });
-
-        if (
-          response.stopReason === "error" ||
-          response.stopReason === "aborted"
-        ) {
-          this.logger.error(
-            `Triage LLM error: ${response.errorMessage ?? response.stopReason}`,
-          );
-          return null;
-        }
-
-        const toolCalls = response.content.filter(
-          (c): c is PiAiToolCall => c.type === "toolCall",
+    // Log tool errors only
+    agent.subscribe((event) => {
+      if (event.type === "tool_execution_end" && event.isError) {
+        this.logger.warn(
+          `Triage ${context.identifier}: tool ${event.toolName} error`,
         );
-
-        // No tool calls — LLM didn't use submit tool, try parsing text as fallback
-        if (toolCalls.length === 0) {
-          const text = response.content
-            .filter((c) => c.type === "text")
-            .map((c) => (c as { type: "text"; text: string }).text)
-            .join("");
-          this.logger.info(`Triage ${context.identifier} raw output:\n${text}`);
-          return this.parseResult(text);
-        }
-
-        // Check if submit_triage_result was called
-        const submitCall = toolCalls.find(
-          (tc) => tc.name === SUBMIT_TRIAGE_TOOL_NAME,
-        );
-        if (submitCall) {
-          const args = submitCall.arguments;
-          this.logger.info(
-            `Triage ${context.identifier} result:\n${JSON.stringify(args, null, 2)}`,
-          );
-          return {
-            shouldTriage: args["shouldTriage"] !== false,
-            assigneeId:
-              typeof args["assigneeId"] === "string" ? args["assigneeId"] : null,
-            priority:
-              typeof args["priority"] === "number" ? args["priority"] : 0,
-            labelIds: Array.isArray(args["labelIds"])
-              ? (args["labelIds"] as string[])
-              : [],
-            reason: typeof args["reason"] === "string" ? args["reason"] : "",
-          };
-        }
-
-        // Other tool calls — execute them
-        messages.push(response);
-
-        for (const tc of toolCalls) {
-          const executor = getToolExecutor(tc.name);
-          if (!executor) {
-            messages.push({
-              role: "toolResult",
-              toolCallId: tc.id,
-              toolName: tc.name,
-              content: [{ type: "text", text: `Error: unknown tool "${tc.name}"` }],
-              isError: true,
-              timestamp: Date.now(),
-            });
-            continue;
-          }
-
-          const result = await executor(tc.arguments);
-          const resultText = result.content
-            .map((c) => ("text" in c ? c.text : "[image]"))
-            .join("");
-          this.logger.info(
-            `Triage ${context.identifier}: tool ${tc.name} result: ${resultText}`,
-          );
-          messages.push({
-            role: "toolResult",
-            toolCallId: tc.id,
-            toolName: tc.name,
-            content: result.content,
-            isError: result.isError,
-            timestamp: Date.now(),
-          });
-        }
       }
+    });
 
-      this.logger.warn(
-        `Triage ${context.identifier}: exceeded max tool rounds (${MAX_TOOL_ROUNDS})`,
-      );
-      return null;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Triage LLM error: ${msg}`);
-      return null;
-    }
+    await agent.prompt(userPrompt, images.length > 0 ? images : undefined);
   }
 
-  /** Parse JSON result from LLM output */
-  parseResult(output: string): TriageResult | null {
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      this.logger.warn("Triage: no JSON found in output");
-      return null;
-    }
-
-    try {
-      const p = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-      return {
-        shouldTriage: p["shouldTriage"] !== false,
-        assigneeId:
-          typeof p["assigneeId"] === "string" ? p["assigneeId"] : null,
-        priority:
-          typeof p["priority"] === "number" ? p["priority"] : 0,
-        labelIds: Array.isArray(p["labelIds"])
-          ? (p["labelIds"] as string[])
-          : [],
-        reason: typeof p["reason"] === "string" ? p["reason"] : "",
-      };
-    } catch (err) {
-      this.logger.warn(`Triage: JSON parse failed: ${err}`);
-      return null;
-    }
-  }
-
-  /** Apply triage result back to Linear */
-  async applyResult(
-    issueId: string,
-    result: TriageResult,
-    context: IssueContext,
-  ): Promise<void> {
-    const update: Record<string, unknown> = {};
-
-    if (!context.existing.hasAssignee && result.assigneeId) {
-      update["assigneeId"] = result.assigneeId;
-    }
-    if (!context.existing.hasPriority && result.priority > 0) {
-      update["priority"] = result.priority;
-    }
-    if (!context.existing.hasLabels && result.labelIds.length > 0) {
-      update["labelIds"] = result.labelIds;
-    }
-
-    // If current state is triage, move to backlog
-    if (context.currentState?.type === "triage") {
-      const backlogState = context.workflowStates.find(
-        (s) => s.type === "backlog",
-      );
-      if (backlogState) {
-        update["stateId"] = backlogState.id;
-      }
-    }
-
-    if (Object.keys(update).length > 0) {
-      await this.linearClient.updateIssue(issueId, update);
-      this.logger.info(
-        `Triage ${context.identifier}: updated ${Object.keys(update).join(", ")}`,
-      );
-    }
-
-    if (result.reason) {
-      await this.linearClient.createComment(
-        issueId,
-        `${result.reason}`,
-      );
-    }
-  }
-
-  /** Full triage flow: collect → LLM → apply (with retry) */
+  /** Full triage flow: collect -> LLM -> apply (with retry) */
   async triageIssue(
     issueId: string,
     { maxRetries = 3, baseDelayMs = 1000 } = {},
@@ -445,18 +287,7 @@ export class IssueTriage {
         const context = await this.collectContext(issueId);
         if (!context) return;
 
-        const result = await this.runTriage(context);
-        if (!result) return;
-
-        if (!result.shouldTriage) {
-          this.logger.info(
-            `Triage ${context.identifier}: LLM determined not eligible for auto-triage, skipping`,
-          );
-          return;
-        }
-
-        await this.applyResult(issueId, result, context);
-        this.logger.info(`Triage ${context.identifier}: done`);
+        await this.runTriage(context);
         return;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
