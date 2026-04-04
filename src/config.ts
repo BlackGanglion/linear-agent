@@ -1,5 +1,26 @@
 import "dotenv/config";
 
+export type LLMProvider = "moonshot" | "claude";
+
+interface ProviderDefaults {
+  baseUrl: string;
+  model: string;
+  envPrefix: string;
+}
+
+const PROVIDER_DEFAULTS: Record<LLMProvider, ProviderDefaults> = {
+  moonshot: {
+    baseUrl: "https://api.moonshot.cn/v1",
+    model: "kimi-k2.5",
+    envPrefix: "MOONSHOT",
+  },
+  claude: {
+    baseUrl: "https://api.laozhang.ai/v1",
+    model: "claude-sonnet-4-6",
+    envPrefix: "CLAUDE",
+  },
+};
+
 export interface AppConfig {
   port: number;
   webhookSecret: string;
@@ -7,8 +28,7 @@ export interface AppConfig {
   clientSecret: string;
   redirectUri: string;
   tokenStorePath: string;
-  defaultDir?: string;
-  // LLM config for triage (OpenAI-compatible API)
+  llmProvider: LLMProvider;
   llmBaseUrl: string;
   llmModel: string;
   llmApiKey: string;
@@ -22,11 +42,18 @@ export function loadConfig(): AppConfig {
   const tokenStorePath =
     process.env["TOKEN_STORE_PATH"] ?? ".data/oauth-token.json";
   const port = parseInt(process.env["PORT"] ?? "3000", 10);
-  const defaultDir = process.env["DEFAULT_DIR"];
+
+  // LLM provider resolution: LLM_PROVIDER -> provider-specific env vars -> generic LLM_* fallback
+  const llmProvider = (process.env["LLM_PROVIDER"] ?? "moonshot") as LLMProvider;
+  const defaults = PROVIDER_DEFAULTS[llmProvider] ?? PROVIDER_DEFAULTS.moonshot;
+  const prefix = defaults.envPrefix;
+
   const llmBaseUrl =
-    process.env["LLM_BASE_URL"] ?? "https://api.moonshot.cn/v1";
-  const llmModel = process.env["LLM_MODEL"] ?? "kimi-k2.5";
-  const llmApiKey = process.env["LLM_API_KEY"] ?? "";
+    process.env[`${prefix}_BASE_URL`] ?? process.env["LLM_BASE_URL"] ?? defaults.baseUrl;
+  const llmModel =
+    process.env[`${prefix}_MODEL`] ?? process.env["LLM_MODEL"] ?? defaults.model;
+  const llmApiKey =
+    process.env[`${prefix}_API_KEY`] ?? process.env["LLM_API_KEY"] ?? "";
 
   if (!webhookSecret || !clientId || !clientSecret || !redirectUri) {
     console.error(
@@ -42,7 +69,7 @@ export function loadConfig(): AppConfig {
     clientSecret,
     redirectUri,
     tokenStorePath,
-    defaultDir,
+    llmProvider,
     llmBaseUrl,
     llmModel,
     llmApiKey,

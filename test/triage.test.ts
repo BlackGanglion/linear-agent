@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 import { IssueTriage, type IssueContext, type LLMConfig } from "../src/triage/triage";
 import type { LinearApiClient } from "../src/linear/client";
 import type { PluginLogger } from "../src/webhook/logger-types";
+import { loadConfig } from "../src/config";
 
 // --- Mock Linear client ---
 
@@ -75,15 +76,11 @@ const TEAM_MEMBERS = [
 // --- LLM config from env ---
 
 function getLLMConfig(): LLMConfig {
-  const baseUrl = process.env["LLM_BASE_URL"];
-  const model = process.env["LLM_MODEL"];
-  const apiKey = process.env["LLM_API_KEY"];
-
-  if (!baseUrl || !model || !apiKey) {
-    throw new Error("Missing LLM_BASE_URL, LLM_MODEL, or LLM_API_KEY in env");
+  const config = loadConfig();
+  if (!config.llmBaseUrl || !config.llmModel || !config.llmApiKey) {
+    throw new Error("Missing LLM config in env");
   }
-
-  return { baseUrl, model, apiKey };
+  return { baseUrl: config.llmBaseUrl, model: config.llmModel, apiKey: config.llmApiKey };
 }
 
 // --- Tests ---

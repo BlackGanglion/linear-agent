@@ -33,22 +33,27 @@ npm test           # vitest run
 - 中文用于面向用户的文案（Linear 评论、工具描述）
 - 不要自动提交代码，每次需要提交时向用户确认
 - 遇到较大变化时，自动写入 history.md 记录优化内容
+- 项目架构变化时，同步更新 `cc-docs/design/` 下的设计文档
 
 ## 测试
 
 - `test/triage.test.ts` — 集成测试，mock Linear API，真实调用 LLM
 - 需要 `.env` 中配置 `LLM_BASE_URL`、`LLM_MODEL`、`LLM_API_KEY`
 - 测试涉及真实 LLM 调用，不要自动运行，需要时向用户申请
-- 只跑 `test/` 目录下的测试（`npx vitest run test/`），不要跑 `cc-origin/` 里的测试
 
 ## 参考代码
 
 - `cc-origin/` — 仅用于参考，不要修改或运行其中的代码和测试
 
+## 参考文档
+
+- `cc-docs/design/` — 项目架构设计文档（architecture、data-flow、graphql-api、tools-spec）
+- `cc-docs/linear/` — Linear API 调用说明文档（auth、best-practices、communication、overview、session-api、session-lifecycle、signals、webhook-types）
+
 ## 环境变量
 
 必需：`LINEAR_WEBHOOK_SECRET`、`LINEAR_CLIENT_ID`、`LINEAR_CLIENT_SECRET`、`LINEAR_REDIRECT_URI`
 
-LLM：`LLM_BASE_URL`（默认 moonshot）、`LLM_MODEL`（默认 kimi-k2.5）、`LLM_API_KEY`
+LLM：`LLM_PROVIDER`（`moonshot` | `claude`，默认 moonshot）、`MOONSHOT_API_KEY`、`CLAUDE_API_KEY`；可选覆盖 `<PROVIDER>_BASE_URL`、`<PROVIDER>_MODEL`
 
 可选：`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`（fetch_trace 工具用）、`PORT`（默认 3000）
