@@ -1,6 +1,12 @@
 import { mkdirSync, createWriteStream, type WriteStream } from "node:fs";
 import { join } from "node:path";
-import type { PluginLogger } from "./webhook/logger-types";
+
+export interface Logger {
+  debug?: (message: string) => void;
+  info: (message: string) => void;
+  warn: (message: string) => void;
+  error: (message: string) => void;
+}
 
 function timestamp(): string {
   return new Date().toLocaleString("sv-SE", {
@@ -15,7 +21,7 @@ function timestamp(): string {
   }).replace(" ", "T");
 }
 
-export function createLogger(logDir: string): PluginLogger {
+export function createLogger(logDir: string): Logger {
   mkdirSync(logDir, { recursive: true });
 
   const logFile = join(

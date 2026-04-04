@@ -1,8 +1,8 @@
 import { Type } from "@mariozechner/pi-ai";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { LinearApiClient } from "../linear/client";
-import type { IssueContext, TriageResult } from "../triage/triage";
-import type { PluginLogger } from "../webhook/logger-types";
+import type { LinearApiClient } from "../../infra/linear/client";
+import type { IssueContext, TriageResult } from "../sub/linear-triage/triage";
+import type { Logger } from "../../utils/logger";
 
 const submitTriageParameters = Type.Object({
   shouldTriage: Type.Boolean({
@@ -45,7 +45,7 @@ async function withRetry<T>(
 export function createSubmitTriageTool(
   linearClient: LinearApiClient,
   context: IssueContext,
-  logger: PluginLogger,
+  logger: Logger,
 ): AgentTool {
   return {
     name: "submit_triage_result",

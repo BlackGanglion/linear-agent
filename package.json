@@ -1,10 +1,10 @@
 {
-  "name": "linear-agent",
+  "name": "egg",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx --watch index.ts",
-    "start": "tsx index.ts",
+    "dev": "tsx --watch bootstrap.ts",
+    "start": "tsx bootstrap.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

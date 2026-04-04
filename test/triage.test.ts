@@ -1,9 +1,9 @@
 import "dotenv/config";
 import { describe, it, expect, vi } from "vitest";
-import { IssueTriage, type IssueContext, type LLMConfig } from "../src/triage/triage";
-import type { LinearApiClient } from "../src/linear/client";
-import type { PluginLogger } from "../src/webhook/logger-types";
-import { loadConfig } from "../src/config";
+import { IssueTriage, type IssueContext, type LLMConfig } from "../src/agent/sub/linear-triage/triage";
+import type { LinearApiClient } from "../src/infra/linear/client";
+import type { Logger } from "../src/utils/logger";
+import { loadConfig } from "../src/utils/config";
 
 // --- Mock Linear client ---
 
@@ -35,7 +35,7 @@ function createMockLinearClient() {
 
 // --- Mock logger ---
 
-function createMockLogger(): PluginLogger & { logs: string[] } {
+function createMockLogger(): Logger & { logs: string[] } {
   const logs: string[] = [];
   return {
     logs,

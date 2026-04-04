@@ -2,10 +2,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Model } from "@mariozechner/pi-ai";
 import { Agent } from "@mariozechner/pi-agent-core";
-import type { LinearApiClient } from "../linear/client";
-import type { PluginLogger } from "../webhook/logger-types";
-import { fetchTraceTool } from "../tool/fetch-trace";
-import { createSubmitTriageTool } from "../tool/submit-triage";
+import type { LinearApiClient } from "../../../infra/linear/client";
+import type { Logger } from "../../../utils/logger";
+import { fetchTraceTool } from "../../tool/fetch-trace";
+import { createSubmitTriageTool } from "../../tool/submit-triage";
 
 // --- Types ---
 
@@ -98,7 +98,7 @@ export class IssueTriage {
   constructor(
     private readonly linearClient: LinearApiClient,
     private readonly llmConfig: LLMConfig,
-    private readonly logger: PluginLogger,
+    private readonly logger: Logger,
     private readonly excludeUserId?: string,
   ) {
     this.model = createModel(llmConfig);

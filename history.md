@@ -1,5 +1,12 @@
 # 优化记录
 
+## 2026-04-04
+
+- **主子 Agent 架构重构** — 从单一用途的 Linear 分诊工具重构为可扩展的主子 agent 架构。引入 `SubAgent` 接口（`invoke()` + `asTool()`）和 `AgentRegistry`，子 agent 既可被 webhook 直接触发，也可作为主 agent 的 tool 调用
+- **目录结构重组** — `src/` 拆为四层：`agent/`（主 agent、子 agent、tool）、`infra/`（Linear SDK/OAuth/Webhook）、`utils/`（config、logger）、`routes/`（Hono 路由）；入口从 `index.ts` 改为 `bootstrap.ts`
+- **项目更名** — `linear-agent` → `egg`，定位从 Linear 分诊工具升级为通用工作自动化 Agent
+- **类型清理** — `PluginLogger` 重命名为 `Logger` 并合并到 `utils/logger.ts`，去除 OpenClaw 历史引用
+
 ## 2026-04-03
 
 - **引入 pi-agent-core** — 用 `@mariozechner/pi-agent-core` 的 `Agent` 类替代手写 tool-calling 循环，自动处理消息状态、工具执行、错误处理

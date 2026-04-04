@@ -1,6 +1,6 @@
 import { LinearWebhookClient } from "@linear/sdk/webhooks";
 import type { EntityWebhookPayloadWithIssueData } from "@linear/sdk";
-import type { PluginLogger } from "./logger-types";
+import type { Logger } from "../../utils/logger";
 
 export interface WebhookCallbacks {
   onIssueCreated?: (payload: EntityWebhookPayloadWithIssueData) => void;
@@ -13,7 +13,7 @@ export interface WebhookCallbacks {
 export function createWebhookHandler(
   webhookSecret: string,
   callbacks: WebhookCallbacks,
-  logger: PluginLogger,
+  logger: Logger,
 ) {
   const client = new LinearWebhookClient(webhookSecret);
   const handler = client.createHandler();

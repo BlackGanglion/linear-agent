@@ -1,4 +1,4 @@
-# Linear Agent — 核心架构
+# Egg — 核心架构
 
 ## 1. 部署模型
 
@@ -18,9 +18,57 @@
 
 ---
 
-## 2. 技术选型
+## 2. 整体架构：主子 Agent
 
-### 2.1 HTTP Server：Hono
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Egg (Hono Server)                         │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────┐      │
+│  │ HTTP Layer (routes/)                                   │      │
+│  │ POST /webhooks/linear → 验签 → AgentRegistry → 子agent │      │
+│  │ GET  /oauth/authorize → 发起 OAuth                     │      │
+│  │ GET  /oauth/callback  → 换 token                       │      │
+│  │ GET  /health, /status → 健康检查                       │      │
+│  └─────────────────────┬─────────────────────────────────┘      │
+│                        │                                        │
+│  ┌─────────────────────▼─────────────────────────────────┐      │
+│  │ Agent Layer (agent/)                                   │      │
+│  │                                                        │      │
+│  │  AgentRegistry                                         │      │
+│  │  ├── SubAgent: "linear-triage"                         │      │
+│  │  │   invoke({ issueId }) → IssueTriage.triageIssue()   │      │
+│  │  │   asTool() → AgentTool for main agent               │      │
+│  │  └── (future sub-agents...)                            │      │
+│  │                                                        │      │
+│  │  Main Agent (预留)                                      │      │
+│  │  └── tools = registry.asTools()                        │      │
+│  │                                                        │      │
+│  │  Tools (tool/)                                         │      │
+│  │  ├── fetch_trace — Langfuse trace 查询                  │      │
+│  │  └── submit_triage_result — 写回 Linear                 │      │
+│  └───────────┬───────────────────────────────────────────┘      │
+│              │                                                  │
+│  ┌───────────▼───────────────────────────────────────────┐      │
+│  │ Infra Layer (infra/linear/)                            │      │
+│  │ LinearApiClient — 封装 token 自动刷新                   │      │
+│  │ OAuth — OAuth 2.0 授权 + token 管理                    │      │
+│  │ Webhook — LinearWebhookClient 验签 + 事件分发           │      │
+│  └───────────────────────────────────────────────────────┘      │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────┐      │
+│  │ Utils (utils/)                                         │      │
+│  │ config.ts — 环境变量加载                                │      │
+│  │ logger.ts — 文件 + 控制台日志                           │      │
+│  └───────────────────────────────────────────────────────┘      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. 技术选型
+
+### 3.1 HTTP Server：Hono
 
 独立 Hono 服务，通过 `@hono/node-server` 运行。
 
@@ -33,7 +81,7 @@ app.post("/webhooks/linear", async (c) => { /* ... */ });
 serve({ fetch: app.fetch, port: config.port });
 ```
 
-### 2.2 Linear API：@linear/sdk
+### 3.2 Linear API：@linear/sdk
 
 使用 Linear 官方 TypeScript SDK，通过 OAuth token 认证：
 
@@ -42,12 +90,11 @@ import { LinearClient } from "@linear/sdk";
 
 class LinearApiClient {
   private tokenProvider: () => Promise<string>;
-  // 每次调用自动获取最新 token，缓存 client 实例
   async getClient(): Promise<LinearClient> { /* ... */ }
 }
 ```
 
-### 2.3 Webhook 验签：@linear/sdk/webhooks
+### 3.3 Webhook 验签：@linear/sdk/webhooks
 
 ```typescript
 import { LinearWebhookClient } from "@linear/sdk/webhooks";
@@ -55,30 +102,24 @@ import { LinearWebhookClient } from "@linear/sdk/webhooks";
 const webhookClient = new LinearWebhookClient(webhookSecret);
 const handler = webhookClient.createHandler();
 handler.on("Issue", (payload) => { /* ... */ });
-handler.on("Comment", (payload) => { /* ... */ });
 ```
 
-### 2.4 LLM 调用：@mariozechner/pi-ai
+### 3.4 Agent 框架：@mariozechner/pi-agent-core
 
-统一的 OpenAI 兼容 API 调用库，支持 tool calling：
+使用 pi-agent-core 的 Agent 类驱动 tool-calling 循环：
 
 ```typescript
-import { complete, type Message } from "@mariozechner/pi-ai";
+import { Agent } from "@mariozechner/pi-agent-core";
 
-// Triage：单次调用，返回 JSON
-const result = await complete(messages, {
-  model: { provider: "openai-compatible", model: config.llmModel },
-  responseFormat: { type: "json_object" },
+const agent = new Agent({
+  initialState: { systemPrompt, model, tools: [fetchTraceTool, submitTool] },
+  getApiKey: async () => apiKey,
+  toolExecution: "sequential",
 });
-
-// Mention：多轮 tool calling 循环
-const result = await complete(messages, {
-  model: { ... },
-  tools: [claudeCodeTool],
-});
+await agent.prompt(userPrompt, images);
 ```
 
-### 2.5 OAuth 2.0 认证
+### 3.5 OAuth 2.0 认证
 
 完整的 OAuth 2.0 流程，token 自动刷新：
 
@@ -90,107 +131,56 @@ const result = await complete(messages, {
 
 ---
 
-## 3. 核心链路
+## 4. 核心链路
 
-### 3.1 Issue 自动分诊
-
-```
-Linear Issue.create → Webhook → SDK 验签 → Issue 路由 → 收集上下文 → 构建 prompt
-                                                        → LLM 调用 (JSON mode)
-                                                        → 解析结果
-                                                        → 更新 issue + 发评论
-```
-
-### 3.2 @mention 代码分析
+### 4.1 Webhook → 子 Agent
 
 ```
-用户在 issue 评论中 @mention Agent
-            │
-Linear Comment.create → Webhook → SDK 验签 → Comment 路由
-            │
-            ├─ 检测是否 mention 了 bot（按 agentId 或 @*agent 模式匹配）
-            │
-            └─ MentionHandler.handleMention()
-               → 收集 issue + 全部评论
-               → LLM 多轮 tool calling（最多 5 轮）
-                 └─ claude_code 工具：调用本地 Claude CLI 分析代码
-               → 提取最终文本回复
-               → 发 Linear 评论
+Linear Issue.create → Webhook → SDK 验签 → routes/webhook.ts
+    → AgentRegistry.get("linear-triage").invoke({ issueId })
+        → IssueTriage.triageIssue()
+            → collectContext() → buildPrompt()
+            → Agent (pi-agent-core) tool-calling 循环
+                → fetch_trace / submit_triage_result
+            → 更新 issue + 发评论
 ```
 
-### 3.3 整体架构
+### 4.2 SubAgent 接口
 
+```typescript
+interface SubAgent {
+  name: string;
+  description: string;
+  invoke(input: Record<string, unknown>): Promise<SubAgentResult>;
+  asTool(): AgentTool;  // 转换为主 agent 的工具
+}
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                   Linear Agent (Hono Server)                    │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────┐      │
-│  │ HTTP Layer (Hono)                                     │      │
-│  │ POST /webhooks/linear → 验签 → 事件路由 → 返回 200    │      │
-│  │ GET  /oauth/authorize → 发起 OAuth                    │      │
-│  │ GET  /oauth/callback  → 换 token                      │      │
-│  │ GET  /health, /status → 健康检查                      │      │
-│  └─────────────────────┬────────────────────────────────┘      │
-│                        │                                       │
-│  ┌─────────────────────▼────────────────────────────────┐      │
-│  │ Event Router (webhook/handler.ts)                     │      │
-│  │ Issue.create   → onIssueCreated callback              │      │
-│  │ Comment.create → onCommentCreated callback            │      │
-│  └───────┬─────────────────────────────┬────────────────┘      │
-│          │                             │                       │
-│  ┌───────▼──────────────┐     ┌───────▼──────────────┐        │
-│  │ Issue Triage          │     │ Mention Handler       │        │
-│  │ (triage/triage.ts)    │     │ (mention/handler.ts)  │        │
-│  │                       │     │                       │        │
-│  │ 1. collectContext()   │     │ 1. 检测 mention       │        │
-│  │ 2. 检查是否需要分诊    │     │ 2. 收集 issue+评论    │        │
-│  │ 3. buildPrompt()     │     │ 3. LLM tool calling   │        │
-│  │ 4. LLM 调用 (JSON)   │     │    (claude_code 工具) │        │
-│  │ 5. 解析 + 更新 issue  │     │ 4. 发评论回复         │        │
-│  └───────┬──────────────┘     └───────┬──────────────┘        │
-│          │                             │                       │
-│  ┌───────▼─────────────────────────────▼────────────────┐      │
-│  │ Linear API (通过 @linear/sdk)                         │      │
-│  │ LinearApiClient — 封装 token 自动刷新                  │      │
-│  │ - client.issue(id) — 获取 issue 详情                  │      │
-│  │ - team.memberships() — 获取团队成员                   │      │
-│  │ - team.labels() — 获取可用标签                        │      │
-│  │ - team.states() — 获取工作流状态                      │      │
-│  │ - issue.update({...}) — 更新 assignee/priority/labels │      │
-│  │ - client.createComment({...}) — 发评论               │      │
-│  └───────────────────────────────────────────────────────┘      │
-│                                                                │
-│  ┌───────────────────────────────────────────────────────┐      │
-│  │ OAuth (api/oauth.ts)                                   │      │
-│  │ - OAuth 2.0 授权流程 + CSRF state 验证                 │      │
-│  │ - Token 自动刷新（过期前 5min）                        │      │
-│  │ - Token 持久化到 .data/oauth-token.json               │      │
-│  │ - Agent ID 自动获取（viewer query）                    │      │
-│  └───────────────────────────────────────────────────────┘      │
-└────────────────────────────────────────────────────────────────┘
-```
+
+- `invoke()`: 直接调用入口（webhook、定时任务等）
+- `asTool()`: 包装为 AgentTool，供主 agent 在 tool-calling 循环中使用
 
 ---
 
-## 4. 模块职责
+## 5. 模块职责
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| **服务入口** | `index.ts` | Hono 路由注册，串联 OAuth + Webhook + Triage + Mention |
-| **配置** | `src/config.ts` | 环境变量加载与校验 |
-| **日志** | `src/logger.ts` | 文件 + 控制台日志（按日分文件） |
-| **OAuth** | `src/api/oauth.ts` | OAuth 2.0 完整流程 + token 自动刷新 + Agent ID 获取 |
-| **Linear 客户端** | `src/linear/client.ts` | LinearClient 封装，token provider 模式 |
-| **Webhook Handler** | `src/webhook/handler.ts` | LinearWebhookClient 验签 + 事件路由 |
-| **Logger 类型** | `src/webhook/logger-types.ts` | PluginLogger 接口定义 |
-| **Issue Triage** | `src/triage/triage.ts` | 上下文收集 → prompt 构建 → LLM 调用 → 结果解析 → 应用 |
-| **Mention Handler** | `src/mention/handler.ts` | @mention 检测 → LLM tool calling → 发评论 |
+| **服务入口** | `bootstrap.ts` | Hono 路由注册，创建 AgentRegistry，串联各模块 |
+| **SubAgent 接口** | `src/agent/types.ts` | SubAgent、SubAgentResult 类型定义 |
+| **Agent 注册表** | `src/agent/registry.ts` | 注册/查找子 agent，转换为 tools |
+| **Linear Triage** | `src/agent/sub/linear-triage/` | 子 agent：Issue 自动分诊 |
+| **Agent 工具** | `src/agent/tool/` | fetch_trace、submit_triage_result |
+| **Linear 客户端** | `src/infra/linear/client.ts` | LinearClient 封装，token provider 模式 |
+| **OAuth** | `src/infra/linear/oauth.ts` | OAuth 2.0 完整流程 + token 自动刷新 |
+| **Webhook** | `src/infra/linear/webhook.ts` | LinearWebhookClient 验签 + 事件路由 |
+| **路由** | `src/routes/` | health、oauth、webhook 路由 |
+| **配置** | `src/utils/config.ts` | 环境变量加载与校验 |
+| **日志** | `src/utils/logger.ts` | 文件 + 控制台日志（按日分文件） |
 | **Triage Prompt** | `prompts/triage.md` | 分诊系统提示词 |
-| **Mention Prompt** | `prompts/mention.md` | Mention 系统提示词 |
 
 ---
 
-## 5. 配置
+## 6. 配置
 
 所有配置通过环境变量（`.env` 文件）：
 
@@ -200,39 +190,47 @@ Linear Comment.create → Webhook → SDK 验签 → Comment 路由
 | `LINEAR_CLIENT_ID` | 是 | Linear OAuth 应用 Client ID |
 | `LINEAR_CLIENT_SECRET` | 是 | Linear OAuth 应用 Client Secret |
 | `LINEAR_REDIRECT_URI` | 是 | OAuth 回调地址 |
+| `LLM_PROVIDER` | 否 | LLM 提供商（`moonshot` \| `claude`，默认 moonshot） |
 | `LLM_API_KEY` | 是 | LLM API Key |
+| `LLM_BASE_URL` | 否 | LLM API 地址 |
+| `LLM_MODEL` | 否 | LLM 模型名称 |
 | `PORT` | 否 | 服务端口（默认 3000） |
-| `LLM_BASE_URL` | 否 | LLM API 地址（默认 `https://api.moonshot.cn/v1`） |
-| `LLM_MODEL` | 否 | LLM 模型名称（默认 `kimi-k2.5`） |
 | `TOKEN_STORE_PATH` | 否 | OAuth Token 存储路径（默认 `.data/oauth-token.json`） |
-| `CLAUDE_CODE_DIR` | 否 | Claude Code 工作目录（mention 代码分析用） |
 
 ---
 
-## 6. 目录结构
+## 7. 目录结构
 
 ```
-├── index.ts                  # Hono 服务入口
+├── bootstrap.ts              # 服务入口
 ├── package.json
 ├── tsconfig.json
-├── .env.example              # 环境变量模板
 ├── prompts/
-│   ├── triage.md             # 分诊系统提示词
-│   └── mention.md            # Mention 系统提示词
+│   └── triage.md             # 分诊系统提示词
 ├── src/
-│   ├── config.ts             # 环境变量加载与校验
-│   ├── logger.ts             # 文件 + 控制台日志
-│   ├── api/
-│   │   └── oauth.ts          # OAuth 2.0 授权流程 + token 管理
-│   ├── linear/
-│   │   └── client.ts         # Linear SDK 客户端封装
-│   ├── webhook/
-│   │   ├── handler.ts        # Webhook 验签 + 事件路由
-│   │   └── logger-types.ts   # Logger 接口
-│   ├── triage/
-│   │   └── triage.ts         # Issue 自动分诊
-│   └── mention/
-│       └── handler.ts        # @mention 代码分析
+│   ├── agent/
+│   │   ├── types.ts          # SubAgent 接口
+│   │   ├── registry.ts       # Agent 注册表
+│   │   ├── main/             # 主 agent（预留）
+│   │   ├── sub/
+│   │   │   └── linear-triage/
+│   │   │       ├── index.ts  # SubAgent 实现
+│   │   │       └── triage.ts # 分诊逻辑
+│   │   └── tool/
+│   │       ├── fetch-trace.ts
+│   │       └── submit-triage.ts
+│   ├── infra/
+│   │   └── linear/
+│   │       ├── client.ts     # Linear SDK 客户端
+│   │       ├── oauth.ts      # OAuth 2.0
+│   │       └── webhook.ts    # Webhook 验签
+│   ├── utils/
+│   │   ├── config.ts         # 环境变量
+│   │   └── logger.ts         # 日志
+│   └── routes/
+│       ├── health.ts
+│       ├── oauth.ts
+│       └── webhook.ts
 ├── cc-docs/
 │   ├── design/               # 设计文档
 │   └── linear/               # Linear API 参考文档

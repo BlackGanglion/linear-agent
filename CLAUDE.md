@@ -1,30 +1,47 @@
-# Linear Agent
+# Egg
 
-Linear webhook agent，自动分诊新建 issue（分配负责人、优先级、标签）。
+LLM 驱动的工作自动化 Agent，采用主子 agent 架构。
 
 ## 命令
 
 ```bash
-npm run dev        # tsx --watch index.ts
-npm start          # tsx index.ts
+npm run dev        # tsx --watch bootstrap.ts
+npm start          # tsx bootstrap.ts
 npm run typecheck  # tsc --noEmit
 npm test           # vitest run
 ```
 
 ## 架构
 
-- **index.ts** — Hono HTTP 服务，OAuth 流程，webhook 路由
-- **src/triage/triage.ts** — 核心分诊逻辑，使用 `@mariozechner/pi-agent-core` Agent 驱动 tool-calling 循环
-- **src/tool/** — Agent 工具（`fetch_trace`、`submit_triage_result`）
-- **src/linear/client.ts** — Linear API 封装（@linear/sdk）
-- **src/webhook/handler.ts** — Webhook 监听 Issue.create 事件
-- **prompts/triage.md** — 分诊系统 prompt
+主子 agent 架构：主 agent（预留）通过 `AgentRegistry` 管理子 agent，子 agent 既可作为主 agent 的 tool 调用，也可被 webhook 直接触发。
+
+### 目录结构
+
+```
+bootstrap.ts                  # 入口：拉起 Hono server，注册路由
+src/
+├── agent/                    # Agent 部分
+│   ├── types.ts              # SubAgent 接口
+│   ├── registry.ts           # AgentRegistry
+│   ├── main/                 # 主 agent（预留）
+│   ├── sub/                  # 子 agent
+│   │   └── linear-triage/    # Linear issue 自动分诊
+│   └── tool/                 # Agent 工具（fetch_trace、submit_triage_result）
+├── infra/                    # 基础设施
+│   └── linear/               # Linear SDK、OAuth、Webhook
+├── utils/                    # 工具模块（config、logger）
+└── routes/                   # Hono 路由（health、oauth、webhook）
+prompts/
+└── triage.md                 # 分诊系统 prompt
+```
 
 ## 关键模式
 
+- 子 agent 实现 `SubAgent` 接口（`invoke()` + `asTool()`）
 - 工具使用 `AgentTool`（from `@mariozechner/pi-agent-core`），错误直接 `throw`，不要返回 `isError`
 - `submit_triage_result` 是工厂函数（`createSubmitTriageTool`），捕获 `linearClient` 和 `context`，在 `execute` 中直接写入 Linear
 - LLM 通过 OpenAI 兼容 API 调用（默认 Moonshot/Kimi）
+- Webhook 通过 `AgentRegistry` 查找并直接调用子 agent
 
 ## 代码规范
 

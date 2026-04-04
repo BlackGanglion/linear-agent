@@ -1,13 +1,14 @@
 [中文](./README.zh-CN.md) | English
 
-# linear-agent
+# egg
 
-Standalone server that integrates Linear with LLM for automatic issue triage.
+A work automation agent powered by LLM, built with a main-agent + sub-agent architecture.
 
-When a new issue is created in Linear, the server automatically collects context, calls an LLM (via OpenAI-compatible API) for analysis, and writes triage results (priority, labels, assignee) back to Linear.
+Currently supports automatic Linear issue triage — when a new issue is created, the agent collects context, calls an LLM for analysis, and writes triage results (priority, labels, assignee) back to Linear.
 
 ## Features
 
+- **Agent Architecture**: Main agent + sub-agent pattern, extensible via `SubAgent` interface
 - **OAuth Authentication**: Linear OAuth 2.0 flow with automatic token refresh
 - **Webhook Receiver**: Listen for Linear webhooks, verify signatures via Linear SDK
 - **Issue Auto-Triage**: Collect issue context → LLM analysis → auto-set priority / labels / assignee
@@ -15,8 +16,8 @@ When a new issue is created in Linear, the server automatically collects context
 ## Quick Start
 
 ```bash
-git clone <repo-url> linear-agent
-cd linear-agent
+git clone <repo-url> egg
+cd egg
 npm install
 cp .env.example .env
 # Edit .env with your credentials
@@ -34,8 +35,9 @@ All configuration is via environment variables (`.env` file supported):
 | `LINEAR_CLIENT_SECRET` | Yes | Linear OAuth app client secret |
 | `LINEAR_REDIRECT_URI` | Yes | OAuth redirect URI (must match Linear app config) |
 | `PORT` | No | Server port (default: `3000`) |
-| `LLM_BASE_URL` | No | LLM API base URL (default: `https://api.moonshot.cn/v1`) |
-| `LLM_MODEL` | No | LLM model name (default: `kimi-k2.5`) |
+| `LLM_PROVIDER` | No | LLM provider: `moonshot` or `claude` (default: `moonshot`) |
+| `LLM_BASE_URL` | No | LLM API base URL |
+| `LLM_MODEL` | No | LLM model name |
 | `LLM_API_KEY` | Yes | LLM API key |
 
 ## Linear Setup
@@ -61,23 +63,40 @@ All configuration is via environment variables (`.env` file supported):
 ## Project Structure
 
 ```
-index.ts                    # Hono server entry point
+bootstrap.ts                    # Entry point: Hono server
 src/
-  config.ts                 # Environment variable loading
-  logger.ts                 # File + console logger
-  api/oauth.ts              # OAuth 2.0 flow (authorize, token, refresh)
-  linear/client.ts          # Linear API client wrapper
-  triage/triage.ts          # Issue triage (context → LLM → apply)
-  webhook/handler.ts        # Webhook signature verification and event dispatch
-  webhook/logger-types.ts   # Logger interface
+  agent/
+    types.ts                    # SubAgent interface
+    registry.ts                 # Agent registry
+    main/                       # Main agent (reserved)
+    sub/
+      linear-triage/            # Sub-agent: Linear issue triage
+        index.ts                # SubAgent implementation
+        triage.ts               # Triage logic (context → LLM → apply)
+    tool/
+      fetch-trace.ts            # Langfuse trace tool
+      submit-triage.ts          # Triage result submission tool
+  infra/
+    linear/
+      client.ts                 # Linear API client wrapper
+      oauth.ts                  # OAuth 2.0 flow
+      webhook.ts                # Webhook signature verification
+  utils/
+    config.ts                   # Environment variable loading
+    logger.ts                   # File + console logger
+  routes/
+    health.ts                   # Health check routes
+    oauth.ts                    # OAuth routes
+    webhook.ts                  # Webhook routes
 prompts/
-  triage.md                 # Triage system prompt
+  triage.md                     # Triage system prompt
 ```
 
 ## Tech Stack
 
 - **[Hono](https://hono.dev/)** — HTTP server
 - **[@linear/sdk](https://developers.linear.app/docs/sdk/getting-started)** — Linear TypeScript SDK
+- **[@mariozechner/pi-agent-core](https://github.com/badlogic/pi-mono)** — Agent framework
 - **[@mariozechner/pi-ai](https://github.com/badlogic/pi-mono)** — LLM completion (OpenAI-compatible)
 - **TypeScript** + **tsx** — No build step required
 
