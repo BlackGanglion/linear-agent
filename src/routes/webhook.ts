@@ -42,7 +42,10 @@ export function registerWebhookRoutes(
         const issueId = await linearClient.getIssueIdByIdentifier(identifier);
         if (issueId) {
           logger.warn(`[webhook-gap] Recovering ${identifier} (id=${issueId})`);
-          void triageAgent.invoke({ issueId });
+          void triageAgent.invoke({ issueId }).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`[webhook-gap] Triage failed for ${identifier}: ${msg}`);
+          });
         } else {
           logger.warn(`[webhook-gap] ${identifier} not found (may be deleted or private)`);
         }
@@ -74,18 +77,27 @@ export function registerWebhookRoutes(
             logger.warn(
               `[webhook-gap] Detected gap: last=${parsed.prefix}-${lastNum}, current=${identifier}, missing ${parsed.number - lastNum - 1} issue(s)`,
             );
-            void handleMissedIssues(parsed.prefix, lastNum + 1, parsed.number);
+            void handleMissedIssues(parsed.prefix, lastNum + 1, parsed.number).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`[webhook-gap] handleMissedIssues failed: ${msg}`);
+          });
           }
           lastSeenNumber.set(parsed.prefix, parsed.number);
         }
 
         const triageAgent = registry.get("linear-triage");
         if (triageAgent) {
-          void triageAgent.invoke({ issueId });
+          void triageAgent.invoke({ issueId }).catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`[webhook] Triage failed for ${identifier}: ${msg}`);
+          });
         }
       },
       onAgentSessionEvent: (payload) => {
-        void mainAgent.handleSessionEvent(payload);
+        void mainAgent.handleSessionEvent(payload).catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          logger.error(`[webhook] handleSessionEvent failed: ${msg}`);
+        });
       },
     },
     logger,

@@ -21,8 +21,14 @@ export function createLinearTriageAgent(
       if (typeof issueId !== "string") {
         return { success: false, message: "missing issueId" };
       }
-      await triage.triageIssue(issueId);
-      return { success: true, message: `Triaged issue ${issueId}` };
+      try {
+        await triage.triageIssue(issueId);
+        return { success: true, message: `Triaged issue ${issueId}` };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[linear-triage] Failed to triage ${issueId}: ${msg}`);
+        return { success: false, message: `Triage failed: ${msg}` };
+      }
     },
 
     asTool() {

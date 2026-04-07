@@ -5,6 +5,7 @@ import type { Logger } from "../../../utils/logger";
 import { fetchTraceTool } from "../../tool/fetch-trace";
 import { createSubmitTriageTool } from "../../tool/submit-triage";
 import { loadPrompt } from "../../../utils/prompt-loader";
+import { withRetry } from "../../../utils/retry";
 
 // --- Types ---
 
@@ -107,7 +108,7 @@ export class IssueTriage {
   /** Collect issue context from Linear */
   async collectContext(issueId: string): Promise<IssueContext | null> {
     const { issue, state, team, assignee, labels } =
-      await this.linearClient.getIssue(issueId);
+      await withRetry(() => this.linearClient.getIssue(issueId));
 
     if (!team) {
       this.logger.warn(`Issue ${issueId}: no team found, skipping`);
@@ -123,11 +124,13 @@ export class IssueTriage {
       return null;
     }
 
-    const [teamMembers, availableLabels, workflowStates] = await Promise.all([
-      this.linearClient.getTeamMembers(team.id),
-      this.linearClient.getTeamLabels(team.id),
-      this.linearClient.getWorkflowStates(team.id),
-    ]);
+    const [teamMembers, availableLabels, workflowStates] = await withRetry(() =>
+      Promise.all([
+        this.linearClient.getTeamMembers(team.id),
+        this.linearClient.getTeamLabels(team.id),
+        this.linearClient.getWorkflowStates(team.id),
+      ]),
+    );
 
     return {
       issueId,
