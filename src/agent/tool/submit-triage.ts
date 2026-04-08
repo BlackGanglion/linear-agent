@@ -9,6 +9,10 @@ const submitTriageParameters = Type.Object({
     description:
       "该 issue 是否属于自动分类范围。不属于时设为 false。",
   }),
+  shouldClose: Type.Boolean({
+    description:
+      "是否直接关闭该 issue。对于误操作、无意义反馈等情况设为 true。默认 false。",
+  }),
   assigneeId: Type.Union([Type.String(), Type.Null()], {
     description:
       "分配的团队成员 id，无法判断时为 null。",
@@ -44,6 +48,7 @@ export function createSubmitTriageTool(
       const a = params as Record<string, unknown>;
       const result: TriageResult = {
         shouldTriage: a["shouldTriage"] !== false,
+        shouldClose: a["shouldClose"] === true,
         assigneeId:
           typeof a["assigneeId"] === "string" ? a["assigneeId"] : null,
         priority:
@@ -68,23 +73,33 @@ export function createSubmitTriageTool(
       // Apply result to Linear directly
       const update: Record<string, unknown> = {};
 
-      if (!context.existing.hasAssignee && result.assigneeId) {
-        update["assigneeId"] = result.assigneeId;
-      }
-      if (!context.existing.hasPriority && result.priority > 0) {
-        update["priority"] = result.priority;
-      }
-      if (!context.existing.hasLabels && result.labelIds.length > 0) {
-        update["labelIds"] = result.labelIds;
-      }
-
-      // If current state is triage, move to backlog
-      if (context.currentState?.type === "triage") {
-        const backlogState = context.workflowStates.find(
-          (s) => s.type === "backlog",
+      if (result.shouldClose) {
+        // Close the issue by moving to cancelled state
+        const cancelledState = context.workflowStates.find(
+          (s) => s.type === "cancelled",
         );
-        if (backlogState) {
-          update["stateId"] = backlogState.id;
+        if (cancelledState) {
+          update["stateId"] = cancelledState.id;
+        }
+      } else {
+        if (!context.existing.hasAssignee && result.assigneeId) {
+          update["assigneeId"] = result.assigneeId;
+        }
+        if (!context.existing.hasPriority && result.priority > 0) {
+          update["priority"] = result.priority;
+        }
+        if (!context.existing.hasLabels && result.labelIds.length > 0) {
+          update["labelIds"] = result.labelIds;
+        }
+
+        // If current state is triage, move to backlog
+        if (context.currentState?.type === "triage") {
+          const backlogState = context.workflowStates.find(
+            (s) => s.type === "backlog",
+          );
+          if (backlogState) {
+            update["stateId"] = backlogState.id;
+          }
         }
       }
 

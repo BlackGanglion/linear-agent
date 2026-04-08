@@ -31,6 +31,7 @@ export interface IssueContext {
 
 export interface TriageResult {
   shouldTriage: boolean;
+  shouldClose: boolean;
   assigneeId: string | null;
   priority: number;
   labelIds: string[];
