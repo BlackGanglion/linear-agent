@@ -76,7 +76,7 @@ export function createSubmitTriageTool(
       if (result.shouldClose) {
         // Close the issue by moving to cancelled state
         const cancelledState = context.workflowStates.find(
-          (s) => s.type === "cancelled",
+          (s) => s.type === "canceled",
         );
         if (cancelledState) {
           update["stateId"] = cancelledState.id;

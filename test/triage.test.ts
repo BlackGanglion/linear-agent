@@ -62,6 +62,7 @@ const WORKFLOW_STATES = [
   { id: "state-backlog", name: "Backlog", type: "backlog" },
   { id: "state-inprogress", name: "In Progress", type: "started" },
   { id: "state-done", name: "Done", type: "completed" },
+  { id: "state-canceled", name: "Canceled", type: "canceled" },
 ];
 
 const TEAM_MEMBERS = [
