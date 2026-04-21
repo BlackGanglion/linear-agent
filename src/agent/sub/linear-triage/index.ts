@@ -3,6 +3,7 @@ import type { SubAgent, SubAgentResult } from "../../types";
 import type { LinearApiClient } from "../../../infra/linear/client";
 import type { Logger } from "../../../utils/logger";
 import { IssueTriage, type LLMConfig } from "./triage";
+import { describeError } from "../../../utils/error";
 
 export function createLinearTriageAgent(
   linearClient: LinearApiClient,
@@ -25,7 +26,7 @@ export function createLinearTriageAgent(
         await triage.triageIssue(issueId);
         return { success: true, message: `Triaged issue ${issueId}` };
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = describeError(err);
         logger.error(`[linear-triage] Failed to triage ${issueId}: ${msg}`);
         return { success: false, message: `Triage failed: ${msg}` };
       }
