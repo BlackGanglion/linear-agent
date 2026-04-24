@@ -32,6 +32,7 @@ export interface AppConfig {
   llmBaseUrl: string;
   llmModel: string;
   llmApiKey: string;
+  triageMinIssueNumber: number;
 }
 
 export function loadConfig(): AppConfig {
@@ -42,6 +43,10 @@ export function loadConfig(): AppConfig {
   const tokenStorePath =
     process.env["TOKEN_STORE_PATH"] ?? ".data/oauth-token.json";
   const port = parseInt(process.env["PORT"] ?? "3000", 10);
+  const triageMinIssueNumber = parseInt(
+    process.env["TRIAGE_MIN_ISSUE_NUMBER"] ?? "0",
+    10,
+  );
 
   // LLM provider resolution: LLM_PROVIDER -> provider-specific env vars -> generic LLM_* fallback
   const llmProvider = (process.env["LLM_PROVIDER"] ?? "moonshot") as LLMProvider;
@@ -73,5 +78,6 @@ export function loadConfig(): AppConfig {
     llmBaseUrl,
     llmModel,
     llmApiKey,
+    triageMinIssueNumber,
   };
 }

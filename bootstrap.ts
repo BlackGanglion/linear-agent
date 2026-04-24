@@ -69,7 +69,7 @@ const app = new Hono();
 
 registerHealthRoutes(app, oauthConfig);
 registerOAuthRoutes(app, oauthConfig, logger);
-registerWebhookRoutes(app, config.webhookSecret, oauthConfig, registry, linearClient, mainAgent, logger);
+registerWebhookRoutes(app, config.webhookSecret, oauthConfig, registry, linearClient, mainAgent, logger, config.triageMinIssueNumber);
 
 // --- Start ---
 

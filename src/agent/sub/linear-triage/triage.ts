@@ -20,8 +20,6 @@ export interface IssueContext {
   workflowStates: Array<{ id: string; name: string; type: string }>;
   currentState?: { id: string; name: string; type: string };
   existing: {
-    hasAssignee: boolean;
-    assigneeName?: string;
     hasPriority: boolean;
     priority?: number;
     hasLabels: boolean;
@@ -116,14 +114,13 @@ export class IssueTriage {
       return null;
     }
 
-    const hasAssignee = !!assignee;
-    const hasPriority = issue.priority > 0;
-    const hasLabels = labels.length > 0;
-
-    // Already fully triaged
-    if (hasAssignee && hasPriority && hasLabels) {
+    if (assignee) {
+      this.logger.info(`Skip triage for ${issue.identifier}: already assigned`);
       return null;
     }
+
+    const hasPriority = issue.priority > 0;
+    const hasLabels = labels.length > 0;
 
     const [teamMembers, availableLabels, workflowStates] = await withRetry(() =>
       Promise.all([
@@ -159,8 +156,6 @@ export class IssueTriage {
         type: s.type,
       })),
       existing: {
-        hasAssignee,
-        assigneeName: assignee?.name,
         hasPriority,
         priority: issue.priority,
         hasLabels,
@@ -181,14 +176,7 @@ export class IssueTriage {
     lines.push(`Team: ${context.teamName}`);
     lines.push("");
 
-    // Existing fields
-    if (context.existing.hasAssignee) {
-      lines.push(
-        `Assignee: ${context.existing.assigneeName} (already set, no need to judge)`,
-      );
-    } else {
-      lines.push("Assignee: needs to be judged");
-    }
+    lines.push("Assignee: needs to be judged");
 
     if (context.existing.hasPriority) {
       lines.push(
@@ -209,13 +197,11 @@ export class IssueTriage {
     lines.push("");
 
     // Available choices
-    if (!context.existing.hasAssignee) {
-      lines.push("Available team members:");
-      for (const m of context.teamMembers) {
-        lines.push(`  - ${m.name} (${m.displayName}) id=${m.id}`);
-      }
-      lines.push("");
+    lines.push("Available team members:");
+    for (const m of context.teamMembers) {
+      lines.push(`  - ${m.name} (${m.displayName}) id=${m.id}`);
     }
+    lines.push("");
 
     if (!context.existing.hasLabels) {
       lines.push("Available labels:");

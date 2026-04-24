@@ -82,7 +82,7 @@ export function createSubmitTriageTool(
           update["stateId"] = cancelledState.id;
         }
       } else {
-        if (!context.existing.hasAssignee && result.assigneeId) {
+        if (result.assigneeId) {
           update["assigneeId"] = result.assigneeId;
         }
         if (!context.existing.hasPriority && result.priority > 0) {

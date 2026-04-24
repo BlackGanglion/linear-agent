@@ -103,7 +103,6 @@ describe("IssueTriage", () => {
       workflowStates: WORKFLOW_STATES,
       currentState: { id: "state-triage", name: "Triage", type: "triage" },
       existing: {
-        hasAssignee: false,
         hasPriority: false,
         hasLabels: false,
       },
@@ -161,7 +160,6 @@ describe("IssueTriage", () => {
       workflowStates: WORKFLOW_STATES,
       currentState: { id: "state-triage", name: "Triage", type: "triage" },
       existing: {
-        hasAssignee: false,
         hasPriority: false,
         hasLabels: false,
       },
@@ -205,7 +203,6 @@ describe("IssueTriage", () => {
       workflowStates: WORKFLOW_STATES,
       currentState: { id: "state-triage", name: "Triage", type: "triage" },
       existing: {
-        hasAssignee: false,
         hasPriority: false,
         hasLabels: false,
       },
@@ -226,7 +223,7 @@ describe("IssueTriage", () => {
     console.log("Correctly skipped, no Linear updates");
   }, 60_000);
 
-  it("should only update missing fields when some are already set", async () => {
+  it("should only update missing fields when labels are already set", async () => {
     const { client, calls } = createMockLinearClient();
     const logger = createMockLogger();
     const llmConfig = getLLMConfig();
@@ -242,8 +239,6 @@ describe("IssueTriage", () => {
       workflowStates: WORKFLOW_STATES,
       currentState: { id: "state-backlog", name: "Backlog", type: "backlog" },
       existing: {
-        hasAssignee: true,
-        assigneeName: "Angela",
         hasPriority: false,
         hasLabels: true,
         labelNames: ["LLM Feedback"],
@@ -256,11 +251,10 @@ describe("IssueTriage", () => {
     expect(calls.updateIssue.length).toBe(1);
     const update = calls.updateIssue[0]!;
 
-    // Should NOT override existing fields
-    expect(update.input["assigneeId"]).toBeUndefined();
+    // Should NOT override existing labels
     expect(update.input["labelIds"]).toBeUndefined();
 
-    // Should only set priority
+    // Should set priority (missing)
     expect(update.input["priority"]).toBeGreaterThanOrEqual(1);
     expect(update.input["priority"]).toBeLessThanOrEqual(4);
 

@@ -16,10 +16,29 @@ export const webhookStats = {
   lastReceivedAt: null as string | null,
 };
 
-function parseIdentifier(identifier: string): { prefix: string; number: number } | null {
+export function parseIdentifier(identifier: string): { prefix: string; number: number } | null {
   const match = identifier.match(/^([A-Z]+)-(\d+)$/);
   if (!match) return null;
   return { prefix: match[1]!, number: parseInt(match[2]!, 10) };
+}
+
+/**
+ * Decide whether a newly created issue should be skipped (not triaged).
+ * Pure function — safe to unit-test without the webhook stack.
+ */
+export function shouldSkipNewIssue(
+  identifier: string,
+  assigneeId: string | null | undefined,
+  minIssueNumber: number,
+): { skip: boolean; reason?: string } {
+  const parsed = parseIdentifier(identifier);
+  if (minIssueNumber > 0 && parsed && parsed.number < minIssueNumber) {
+    return { skip: true, reason: `number below threshold ${minIssueNumber}` };
+  }
+  if (assigneeId) {
+    return { skip: true, reason: "already assigned" };
+  }
+  return { skip: false };
 }
 
 export function registerWebhookRoutes(
@@ -30,12 +49,14 @@ export function registerWebhookRoutes(
   linearClient: LinearApiClient,
   mainAgent: MainAgent,
   logger: Logger,
+  triageMinIssueNumber: number,
 ) {
   async function handleMissedIssues(prefix: string, from: number, to: number) {
     const triageAgent = registry.get("linear-triage");
     if (!triageAgent) return;
 
     for (let n = from; n < to; n++) {
+      if (triageMinIssueNumber > 0 && n < triageMinIssueNumber) continue;
       const identifier = `${prefix}-${n}`;
       logger.warn(`[webhook-gap] Missed webhook for ${identifier}, fetching via API`);
       try {
@@ -68,6 +89,16 @@ export function registerWebhookRoutes(
 
         const identifier = String(payload.data.identifier);
         logger.info(`New issue: ${identifier} — ${String(payload.data.title)}`);
+
+        const decision = shouldSkipNewIssue(
+          identifier,
+          payload.data.assigneeId,
+          triageMinIssueNumber,
+        );
+        if (decision.skip) {
+          logger.info(`Skip triage for ${identifier}: ${decision.reason}`);
+          return;
+        }
 
         // Gap detection
         const parsed = parseIdentifier(identifier);

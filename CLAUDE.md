@@ -73,4 +73,4 @@ prompts/
 
 LLM：`LLM_PROVIDER`（`moonshot` | `claude`，默认 moonshot）、`MOONSHOT_API_KEY`、`CLAUDE_API_KEY`；可选覆盖 `<PROVIDER>_BASE_URL`、`<PROVIDER>_MODEL`
 
-可选：`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`（fetch_trace 工具用）、`PORT`（默认 3000）
+可选：`LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`（fetch_trace 工具用）、`PORT`（默认 3000）、`TRIAGE_MIN_ISSUE_NUMBER`（严格小于该编号的 issue 跳过分诊，未设置或 0 不生效）
