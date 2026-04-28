@@ -34,6 +34,7 @@ export interface TriageResult {
   priority: number;
   labelIds: string[];
   reason: string;
+  keepInTriage: boolean;
 }
 
 export interface LLMConfig {

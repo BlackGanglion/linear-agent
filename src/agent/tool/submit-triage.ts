@@ -28,6 +28,10 @@ const submitTriageParameters = Type.Object({
   reason: Type.String({
     description: "简要说明判断理由（2-3句话），使用中文。",
   }),
+  keepInTriage: Type.Boolean({
+    description:
+      "是否保持 issue 在 Triage 状态（不自动迁移到 Backlog）。仅在分配给 CaiCai/子溯时设为 true，其他情况一律为 false。",
+  }),
 });
 
 import { withRetry } from "../../utils/retry";
@@ -57,6 +61,7 @@ export function createSubmitTriageTool(
           ? (a["labelIds"] as string[])
           : [],
         reason: typeof a["reason"] === "string" ? a["reason"] : "",
+        keepInTriage: a["keepInTriage"] === true,
       };
 
       logger.info(
@@ -92,8 +97,8 @@ export function createSubmitTriageTool(
           update["labelIds"] = result.labelIds;
         }
 
-        // If current state is triage, move to backlog
-        if (context.currentState?.type === "triage") {
+        // If current state is triage, move to backlog (unless keepInTriage)
+        if (context.currentState?.type === "triage" && !result.keepInTriage) {
           const backlogState = context.workflowStates.find(
             (s) => s.type === "backlog",
           );

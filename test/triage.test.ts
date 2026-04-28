@@ -223,6 +223,52 @@ describe("IssueTriage", () => {
     console.log("Correctly skipped, no Linear updates");
   }, 60_000);
 
+  it("should keep CaiCai-assigned issues in Triage state", async () => {
+    const { client, calls } = createMockLinearClient();
+    const logger = createMockLogger();
+    const llmConfig = getLLMConfig();
+
+    const teamMembersWithCaiCai = [
+      ...TEAM_MEMBERS,
+      { id: "user-caicai", name: "CaiCai", displayName: "子溯" },
+    ];
+
+    const context: IssueContext = {
+      issueId: "issue-005",
+      identifier: "YOU-10005",
+      title: "[Contact Us] 申请退款，已订阅 1 个月但无法正常使用",
+      description: "用户反馈上个月订阅了 Pro 套餐，但因为某些功能问题一直无法使用，希望申请全额退款。订单号：xxx-xxx。",
+      teamName: "YouMind",
+      teamMembers: teamMembersWithCaiCai,
+      availableLabels: AVAILABLE_LABELS,
+      workflowStates: WORKFLOW_STATES,
+      currentState: { id: "state-triage", name: "Triage", type: "triage" },
+      existing: {
+        hasPriority: false,
+        hasLabels: false,
+      },
+    };
+
+    const triage = new IssueTriage(client, llmConfig, logger);
+    await triage.runTriage(context);
+
+    expect(calls.updateIssue.length).toBe(1);
+    const update = calls.updateIssue[0]!;
+
+    // Refund / subscription issue should be assigned to CaiCai
+    expect(update.input["assigneeId"]).toBe("user-caicai");
+
+    // Should NOT move from Triage to Backlog (keepInTriage should be true)
+    expect(update.input["stateId"]).toBeUndefined();
+
+    // Comment should still be created
+    expect(calls.createComment.length).toBe(1);
+
+    console.log("\n--- CaiCai Triage Result ---");
+    console.log("updateIssue:", JSON.stringify(update.input, null, 2));
+    console.log("comment:", calls.createComment[0]!.body);
+  }, 60_000);
+
   it("should only update missing fields when labels are already set", async () => {
     const { client, calls } = createMockLinearClient();
     const logger = createMockLogger();
